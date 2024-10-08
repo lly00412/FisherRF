@@ -13,18 +13,26 @@ Pillow==10.2.0
 pymeshlab==2023.12.post1
 scipy==1.12.0
 wandb==0.15.12
+seaborn
 ```
 
 ### Clone our repo with submodules:
 ```bash
 git clone git@github.com:JiangWenPL/FisherRF.git --recursive
 ```
+### Creare conda environment:
+```bash
+conda create --name fisherRF python=3.10
+conda activate fisherRF
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
+```
+
 
 ### Install extensions:
 ```bash
 pip install submodules/diff-gaussian-rasterization/
 pip install submodules/simple-knn/
-pip install -e ./diff/ -v
+pip install ./diff/
 ```
 
 ### Download Datasets (Optional)
