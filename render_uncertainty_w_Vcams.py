@@ -30,6 +30,12 @@ import matplotlib.pyplot as plt
 import itertools
 from active.schema import schema_dict, override_test_idxs_dict, override_train_idxs_dict
 
+##### Virtual cameras
+from scene.cameras import VirtualCam
+from utils.graphics_utils import getIntrinsicMatrix
+from utils.proj_utils import *
+
+
 def capture(self):
     return (
         self.active_sh_degree,
@@ -48,16 +54,21 @@ def capture(self):
 
 @torch.no_grad()
 def render_uncertainty(view, gaussians, pipeline, background, hessian_color):
+    ###########################
+    #  rendering RGB, depth & error
+    ###########################
     render_pkg = modified_render(view, gaussians, pipeline, background)
     pred_img = render_pkg["render"]
     # pred_img.backward(gradient=torch.ones_like(pred_img))
+    gt_img = view.original_image[0:3, :, :]
     pixel_gaussian_counter = render_pkg["pixel_gaussian_counter"]
+    rgb_err = torch.mean((pred_img - gt_img)**2,0)
 
     render_pkg = modified_render(view, gaussians, pipeline, background, override_color=hessian_color)
-
+    depth = render_pkg["depth"]
     uncertanity_map = reduce(render_pkg["render"], "c h w -> h w", "mean")
 
-    return pred_img, uncertanity_map, pixel_gaussian_counter, render_pkg["depth"]
+    return pred_img, uncertanity_map, pixel_gaussian_counter, depth
 
 def render_set(model_path, name, iteration, train_views, test_views, gaussians, pipeline, background, perturb_scale=1., camera_extent=None, args=None):
     render_path = os.path.join(model_path, "renders")
@@ -112,7 +123,6 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             cur_hessian_color = hessian_color * gaussian_depths.clamp(min=0)
 
             pred_img, uncertanity_map, pixel_gaussian_counter, depth = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color)
-
             # sns.heatmap(torch.log(uncertanity_map / pixel_gaussian_counter).clamp(min=0).detach().cpu(), square=True)
             # plt.savefig(f"./uncern_all.jpg")
             # torchvision.utils.save_image(pred_img.detach(), os.path.join(render_path, f"{split}_{idx:05d}.png"))
