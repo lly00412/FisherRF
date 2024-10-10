@@ -53,22 +53,97 @@ def capture(self):
     )
 
 @torch.no_grad()
-def render_uncertainty(view, gaussians, pipeline, background, hessian_color):
+def render_uncertainty(view, gaussians, pipeline, background, hessian_color,render_vcam=True):
     ###########################
     #  rendering RGB, depth & error
     ###########################
+    rests = {}
     render_pkg = modified_render(view, gaussians, pipeline, background)
     pred_img = render_pkg["render"]
     # pred_img.backward(gradient=torch.ones_like(pred_img))
     gt_img = view.original_image[0:3, :, :]
     pixel_gaussian_counter = render_pkg["pixel_gaussian_counter"]
     rgb_err = torch.mean((pred_img - gt_img)**2,0)
+    rests['rgb_err'] = rgb_err
 
     render_pkg = modified_render(view, gaussians, pipeline, background, override_color=hessian_color)
     depth = render_pkg["depth"]
     uncertanity_map = reduce(render_pkg["render"], "c h w -> h w", "mean")
 
-    return pred_img, uncertanity_map, pixel_gaussian_counter, depth
+    ###########################
+    #  rendering vcams
+    ###########################
+    if render_vcam:
+        look_at, rd_c2w = extract_scene_center_and_C2W(depth, view)
+        rd_c2w = rd_c2w.to(depth.device)
+        K = getIntrinsicMatrix(width=view.image_width, height=view.image_height,
+                               fovX=view.FoVx, fovY=view.FoVy).to(depth.device)  # (4,4)
+        GetVcam = VirtualCam(view)
+        backwarp = BackwardWarping(out_hw=(view.image_height, view.image_width),
+                                   device=depth.device, K=K)
+        rd_depth = depth.clone().unsqueeze(0).unsqueeze(0)
+        vir_depths = []
+        vir_pred_imgs = []
+        rd2virs = []
+        for drt in ['u', 'd', 'l', 'r']:
+            vir_view = GetVcam.get_near_cam_by_look_at(look_at=look_at, direction=drt)
+            vir_render_pkg = modified_render(vir_view, gaussians, pipeline, background)
+            vir_depth = vir_render_pkg['depth']
+            vir_pred_img = vir_render_pkg['render']
+            vir_w2c = vir_view.world_view_transform.transpose(0, 1)
+            rd2vir = vir_w2c @ rd_c2w
+            rd2virs.append(rd2vir)
+            vir_depths.append(vir_depth.unsqueeze(0))
+            vir_pred_imgs.append(vir_pred_img)
+        rd_depths = rd_depth.repeat(4, 1, 1, 1)
+        rd_pred_imgs = pred_img.unsqueeze(0).repeat(4, 1, 1, 1)
+        vir_depths = torch.stack(vir_depths)
+        rd2virs = torch.stack(rd2virs)
+        vir2rd_pred_imgs, vir2rd_depths, nv_mask = backwarp(img_src=rd_pred_imgs, depth_src=vir_depths, depth_tgt=rd_depths,
+                                                          tgt2src_transform=rd2virs)
+        rests['vir2rd_depths'] = vir2rd_depths
+        rests['vir2rd_pred_imgs'] = vir2rd_pred_imgs
+        rests['nv_mask'] = nv_mask
+        ################################
+        #  compute uncertainty by l2 diff
+        ################################
+        # depth uncertainty
+        vir2rd_depth_sum = vir2rd_depths.sum(0)
+        numels = 4. - nv_mask.sum(0)
+        vir2rd_depth = torch.zeros_like(rd_depth.squeeze(0))
+        vir2rd_depth[numels > 0] = vir2rd_depth_sum[numels > 0] / numels[numels > 0]
+        depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth_sum) ** 2
+        depth_l2 = depth_l2.squeeze(0)
+        rests['depth_l2'] = depth_l2
+
+        # rgb uncertainty
+        vir2rd_pred_sum = vir2rd_pred_imgs.sum(0).mean(0, keepdim=True)
+        rendering_ = pred_img.mean(0, keepdim=True)
+        vir2rd_pred = torch.zeros_like(rendering_)
+        vir2rd_pred[numels > 0] = vir2rd_pred_sum[numels > 0] / numels[numels > 0]
+        rgb_l2 = (rendering_ - vir2rd_pred) ** 2
+        rgb_l2 = rgb_l2.squeeze(0)
+        rests['rgb_l2'] = rgb_l2
+
+        ################################
+        #  compute uncertainty by variance
+        ################################
+        vis_mask = (nv_mask.sum(0) < 1.)
+        # depth uncertainty
+        depths = torch.cat([vir2rd_depths, rd_depth])
+        depth_var = depths.var(0)
+        depth_var[~vis_mask] = 0.
+        depth_var = depth_var.squeeze(0)
+        rests['depth_var'] = depth_var
+
+        # rgb uncertainty
+        renderings = torch.cat([vir2rd_pred_imgs, pred_img.unsqueeze(0)])
+        render_var = renderings.var(0).mean(0, keepdim=True)
+        render_var[~vis_mask] = 0.
+        render_var = render_var.squeeze(0)
+        rests['rgb_var'] = render_var
+
+    return pred_img, uncertanity_map, pixel_gaussian_counter, depth, rests
 
 def render_set(model_path, name, iteration, train_views, test_views, gaussians, pipeline, background, perturb_scale=1., camera_extent=None, args=None):
     render_path = os.path.join(model_path, "renders")
@@ -76,6 +151,11 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
 
     makedirs(render_path, exist_ok=True)
     makedirs(eval_path, exist_ok=True)
+
+    if args is not None:
+        if args.render_vcam:
+            vir_path = os.path.join(model_path, "vcams")
+            makedirs(vir_path, exist_ok=True)
 
     params = capture(gaussians)[1:7]
     name2idx = {"xyz": 0, "rgb": 1, "sh": 2, "scale": 3, "rotation": 4, "opacity": 5}
@@ -230,6 +310,7 @@ if __name__ == "__main__":
     parser.add_argument("--override_idxs", default=None, type=str, help="speical test idxs on uncertainty evaluation")
     parser.add_argument("--depth_only", action="store_true", help="render depth only")
     parser.add_argument("--current", action="store_true", help="render uncertainty from current view")
+    parser.add_argument("--render_vcam", action="store_true", help="render uncertainty from virtual cameras")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
