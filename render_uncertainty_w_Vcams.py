@@ -202,10 +202,11 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
 
             cur_hessian_color = hessian_color * gaussian_depths.clamp(min=0)
 
-            pred_img, uncertanity_map, pixel_gaussian_counter, depth = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color)
+            pred_img, uncertanity_map, pixel_gaussian_counter, depth, rests = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color)
             # sns.heatmap(torch.log(uncertanity_map / pixel_gaussian_counter).clamp(min=0).detach().cpu(), square=True)
             # plt.savefig(f"./uncern_all.jpg")
             # torchvision.utils.save_image(pred_img.detach(), os.path.join(render_path, f"{split}_{idx:05d}.png"))
+            # TODO: Save all outputs and compute the aucs
             if args.depth_only:
                 sns.heatmap(depth.detach().cpu(), square=True)
                 plt.savefig(os.path.join(eval_path, f"depth_viz_{view.image_name}.jpg"))
