@@ -32,9 +32,13 @@ class All(BaseSchema):
         return 0
 
 class V10(BaseSchema):
-    def __init__(self, **kwargs) -> None:
+    def __init__(self,**kwargs) -> None:
         dataset_size = kwargs.get("dataset_size")
-        self.init_views = list(range(dataset_size))
+        obj = kwargs.get("train_idxs")
+        if obj in override_train_idxs_dict.keys():
+            self.init_views = override_train_idxs_dict[obj]
+        else:
+            self.init_views = random.sample(range(dataset_size), 10)
         random.shuffle(self.init_views)
         self.load_its = {}
 
@@ -124,11 +128,12 @@ V20Seq4Inplace = partial(VNSeqMInplace, N=20, M=4, num_init_views=4, interval_ep
 
 schema_dict: Dict[str, BaseSchema] = {'all': All, "debug": V20Seq1Debug,
                                       "v20seq1_inplace": V20Seq1Inplace, "v10seq1_inplace": V10Seq1Inplace,
-                                      "v20seq4_inplace": V20Seq4Inplace,
+                                      "v20seq4_inplace": V20Seq4Inplace, "v10": V10,
                                       }
 
 override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2)), "africa": list(range(6, 14, 2)),
                                             "statue": list(range(68, 76, 2)), "torch": list(range(9, 17, 2))}
 
 override_train_idxs_dict: Dict[str, List[int]] = {"basket": list(range(43, 50,2)), "africa": list(range(5, 14, 2)),
-                                            "statue": list(range(67, 76, 2)), "torch": list(range(8, 17, 2))}
+                                            "statue": list(range(67, 76, 2)), "torch": list(range(8, 17, 2)),
+                                                  "ship": [0,4,22,35,36,43,57,60,63,76]}

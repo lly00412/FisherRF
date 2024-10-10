@@ -59,9 +59,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians.training_setup(opt)
     
     # Active View Selection
-    schema = schema_dict[args.schema](dataset_size=len(scene.getTrainCameras()), scene=scene)
+    if hasattr(args,"train_idxs"):
+        train_idxs = args.train_idxs
+    else:
+        train_idxs = None
+    schema = schema_dict[args.schema](dataset_size=len(scene.getTrainCameras()), scene=scene, train_idxs=train_idxs)
     print(f"schema: {schema.load_its}")
     scene.train_idxs = schema.init_views
+    print(f"train cameras: {scene.train_idxs}")
 
     active_method = methods_dict[args.method](args)
 
@@ -321,6 +326,7 @@ if __name__ == "__main__":
     parser.add_argument("--filter_out_grad", nargs="+", type=str, default=["rotation"])
     parser.add_argument("--log_every_image", action="store_true", help="log every images during traing")
     parser.add_argument("--override_idxs", default=None, type=str, help="speical test idxs on uncertainty evaluation")
+    parser.add_argument("--train_idxs", default=None, type=str, help="speical train idxs on fewshot training")
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)

@@ -48,6 +48,15 @@ def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
     Rt = np.linalg.inv(C2W)
     return np.float32(Rt)
 
+def getView2World(R,t):
+    Rt = np.zeros((4, 4))
+    Rt[:3, :3] = R.transpose()
+    Rt[:3, 3] = t
+    Rt[3, 3] = 1.0
+
+    C2W = np.linalg.inv(Rt)
+    return np.float32(C2W)
+
 def getProjectionMatrix(znear, zfar, fovX, fovY):
     tanHalfFovY = math.tan((fovY / 2))
     tanHalfFovX = math.tan((fovX / 2))
@@ -69,6 +78,28 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
     P[2, 2] = z_sign * zfar / (zfar - znear)
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     return P
+
+def getIntrinsicMatrix(width, height,fovX, fovY):
+    # Compute focal lengths in pixels
+    f_x = width / (2.0 * math.tan(fovX / 2.0))
+    f_y = height / (2.0 * math.tan(fovY / 2.0))
+
+    # Principal point (center of the image)
+    c_x = width / 2.0
+    c_y = height / 2.0
+
+    # Construct the intrinsic matrix K
+    K_ = np.array([
+        [f_x, 0, c_x],
+        [0, f_y, c_y],
+        [0, 0, 1]
+    ])
+
+    K_ = torch.from_numpy(K_)
+    K = torch.eye(4,4)
+    K[:3,:3] = K_
+
+    return K
 
 def fov2focal(fov, pixels):
     return pixels / (2 * math.tan(fov / 2))
