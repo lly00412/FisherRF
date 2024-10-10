@@ -31,6 +31,15 @@ class All(BaseSchema):
     def num_views_to_add(self, it: int) -> int:
         return 0
 
+class V10(BaseSchema):
+    def __init__(self, **kwargs) -> None:
+        dataset_size = kwargs.get("dataset_size")
+        self.init_views = list(range(dataset_size))
+        random.shuffle(self.init_views)
+        self.load_its = {}
+
+    def num_views_to_add(self, it: int) -> int:
+        return 0
 
 class V20Seq1Debug(BaseSchema):
     """
