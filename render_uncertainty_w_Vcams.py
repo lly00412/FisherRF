@@ -87,7 +87,8 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color,rend
         vir_pred_imgs = []
         rd2virs = []
         for drt in ['u', 'd', 'l', 'r']:
-            vir_view = GetVcam.get_near_cam_by_look_at(look_at=look_at, direction=drt)
+            # TODO: change theta here for different values
+            vir_view = GetVcam.get_near_cam_by_look_at(look_at=look_at, direction=drt,theta=1)
             vir_render_pkg = modified_render(vir_view, gaussians, pipeline, background)
             vir_depth = vir_render_pkg['depth']
             vir_pred_img = vir_render_pkg['render']
