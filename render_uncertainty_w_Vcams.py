@@ -34,7 +34,7 @@ from active.schema import schema_dict, override_test_idxs_dict, override_train_i
 from scene.cameras import VirtualCam
 from utils.graphics_utils import getIntrinsicMatrix
 from utils.proj_utils import *
-
+from utils.uncert_utils import *
 
 def capture(self):
     return (
@@ -73,6 +73,7 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color,rend
     ###########################
     #  rendering vcams
     ###########################
+    # TODO: change theta to be different values and show the difference on uncertainty estimation
     if render_vcam:
         look_at, rd_c2w = extract_scene_center_and_C2W(depth, view)
         rd_c2w = rd_c2w.to(depth.device)
@@ -112,7 +113,7 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color,rend
         numels = 4. - nv_mask.sum(0)
         vir2rd_depth = torch.zeros_like(rd_depth.squeeze(0))
         vir2rd_depth[numels > 0] = vir2rd_depth_sum[numels > 0] / numels[numels > 0]
-        depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth_sum) ** 2
+        depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth) ** 2
         depth_l2 = depth_l2.squeeze(0)
         rests['depth_l2'] = depth_l2
 
@@ -148,9 +149,15 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color,rend
 def render_set(model_path, name, iteration, train_views, test_views, gaussians, pipeline, background, perturb_scale=1., camera_extent=None, args=None):
     render_path = os.path.join(model_path, "renders")
     eval_path = os.path.join(model_path, "eval")
+    depth_path = os.path.join(model_path, "depth")
+    error_path = os.path.join(model_path, "error")
+    roc_path = os.path.join(model_path, "roc")
 
     makedirs(render_path, exist_ok=True)
     makedirs(eval_path, exist_ok=True)
+    makedirs(depth_path, exist_ok=True)
+    makedirs(error_path, exist_ok=True)
+    makedirs(roc_path, exist_ok=True)
 
     if args is not None:
         if args.render_vcam:
@@ -191,7 +198,9 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
         H_per_gaussian += 1
 
     hessian_color = repeat(H_per_gaussian.detach(), "n -> n c", c=3)
-    
+
+    ROCs = {}
+    AUCs = {}
     with torch.no_grad():
         for idx, view in enumerate(tqdm(test_views, desc="Rendering on test set")):
             
@@ -201,24 +210,98 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             gaussian_depths = pts3d_cam[:, 2, None]
 
             cur_hessian_color = hessian_color * gaussian_depths.clamp(min=0)
-
             pred_img, uncertanity_map, pixel_gaussian_counter, depth, rests = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color)
-            # sns.heatmap(torch.log(uncertanity_map / pixel_gaussian_counter).clamp(min=0).detach().cpu(), square=True)
-            # plt.savefig(f"./uncern_all.jpg")
-            # torchvision.utils.save_image(pred_img.detach(), os.path.join(render_path, f"{split}_{idx:05d}.png"))
-            # TODO: Save all outputs and compute the aucs
-            if args.depth_only:
-                sns.heatmap(depth.detach().cpu(), square=True)
-                plt.savefig(os.path.join(eval_path, f"depth_viz_{view.image_name}.jpg"))
-            else:
-                sns.heatmap(torch.log(uncertanity_map / pixel_gaussian_counter).detach().cpu(), square=True)
-                plt.savefig(os.path.join(eval_path, f"heatmap_{view.image_name}.jpg"))
+
+            ################################
+            #  save all outputs
+            ################################
+            mask = (depth>0.)
+
+            # save depth
+            plt.figure(facecolor='white')
+            sns.heatmap(depth.detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
+            plt.savefig(os.path.join(depth_path, f"{view.image_name}.jpg"))
             plt.clf()
 
-            np.savez(os.path.join(eval_path, f"uncertainty_{idx:03d}_{view.image_name}.npz"), 
+            # save error
+            plt.figure(facecolor='white')
+            sns.heatmap(rests['rgb_err'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
+            plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
+            plt.clf()
+
+            # save l2 diff
+            plt.figure(facecolor='white')
+            sns.heatmap(rests['rgb_l2'].detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+            plt.savefig(os.path.join(eval_path, f"rgbl2_{view.image_name}.jpg"))
+            plt.clf()
+
+            plt.figure(facecolor='white')
+            sns.heatmap(rests['depth_l2'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
+            plt.savefig(os.path.join(eval_path, f"depthl2_{view.image_name}.jpg"))
+            plt.clf()
+
+            # save var
+            plt.figure(facecolor='white')
+            sns.heatmap(rests['rgb_var'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
+            plt.savefig(os.path.join(eval_path, f"rgbvar_{view.image_name}.jpg"))
+            plt.clf()
+
+            plt.figure(facecolor='white')
+            sns.heatmap(rests['depth_var'].detach().cpu(), square=True)
+            plt.savefig(os.path.join(eval_path, f"depthvar_{view.image_name}.jpg"))
+            plt.clf()
+
+            # save fisherRF
+            sns.heatmap(torch.log(uncertanity_map / pixel_gaussian_counter).detach().cpu(), square=True)
+            plt.savefig(os.path.join(eval_path, f"fisher_{view.image_name}.jpg"))
+            plt.clf()
+
+            # save raw output
+            np.savez(os.path.join(eval_path, f"uncertainty_{idx:03d}_{view.image_name}.npz"),
                      uncertanity_map=uncertanity_map.cpu(), pixel_gaussian_counter=pixel_gaussian_counter.cpu(),
-                     depth=depth.cpu(),
+                     depth=depth.cpu(), rgb_l2=rests['rgb_l2'].cpu(),depth_l2=rests['depth_l2'].cpu(),
+                     rgb_var=rests['rgb_var'].cpu(), depth_var=rests['depth_var'].cpu(),
                      )
+
+            ################################
+            #  compute auc
+            ################################
+            opt_label = 'rgb_err'
+            values = {
+                'rgb_err': rests['rgb_err'][mask].flatten(),
+                'rgb_l2': rests['rgb_l2'][mask].flatten(),
+                'depth_l2':rests['depth_l2'][mask].flatten(),
+                'rgb_var':rests['rgb_var'][mask].flatten(),
+                'depth_var':rests['depth_var'][mask].flatten(),
+                'fisherRF':uncertanity_map[mask].flatten(),
+            }
+
+            rocs = {}
+            aucs = {}
+            for val in values.keys():
+                roc, auc = compute_roc(opt=values[opt_label], est=values[val], intervals=20)
+                rocs[val] = np.array(roc)
+                aucs[val] = auc
+                if val not in ROCs.keys():
+                    ROCs[val] = [roc]
+                    AUCs[val] = [auc]
+                else:
+                    ROCs[val].append(roc)
+                    AUCs[val].append(auc)
+
+            plot_file = os.path.join(roc_path, '{0:05d}'.format(idx) + ".jpg")
+            txt_file = os.path.join(roc_path, '{0:05d}'.format(idx) + ".txt")
+            plot_roc(ROC_dict=rocs, fig_name=plot_file, opt_label=opt_label,intervals=20)
+            write_auc(AUC_dict=aucs, txt_name=txt_file)
+
+
+        for val in ROCs.keys():
+            ROCs[val] = np.array(ROCs[val]).mean(0)
+            AUCs[val] = np.array(AUCs[val]).mean(0)
+        summary_plot = os.path.join(roc_path, f'{name}' + ".png")
+        summary_txt = os.path.join(roc_path, f'{name}' + ".txt")
+        plot_roc(ROC_dict=ROCs, fig_name=summary_plot, opt_label=opt_label,intervals=20)
+        write_auc(AUC_dict=AUCs, txt_name=summary_txt)
 
 def render_set_current(model_path, name, iteration, train_views, test_views, gaussians, pipeline, background, perturb_scale=1., camera_extent=None, args=None):
     eval_path = os.path.join(model_path, "eval")

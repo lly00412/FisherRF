@@ -16,7 +16,7 @@ def compute_roc(opt,est,intervals = 10): # input torch.tensor
 def plot_roc(ROC_dict,fig_name, opt_label='rgb_err',intervals = 10):
     quants = [100. / intervals * t for t in range(1, intervals + 1)]
     plt.figure()
-    plt.rcParams.update({'font.size': 25})
+    plt.rcParams.update({'font.size': 16})
     # plot opt
     ROC_opt = ROC_dict.pop(opt_label)
     plt.plot(quants, ROC_opt, marker="^", markersize=10, linewidth= 2,color='blue', label=opt_label)
