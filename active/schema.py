@@ -31,14 +31,17 @@ class All(BaseSchema):
     def num_views_to_add(self, it: int) -> int:
         return 0
 
-class V10(BaseSchema):
+class VK(BaseSchema):
     def __init__(self,**kwargs) -> None:
         dataset_size = kwargs.get("dataset_size")
         obj = kwargs.get("train_idxs")
+        num_inits = kwargs.get("num_inits")
         if obj in override_train_idxs_dict.keys():
             self.init_views = override_train_idxs_dict[obj]
+            if len(self.init_views)>num_inits:
+                self.init_views = random.sample(self.init_views, num_inits)
         else:
-            self.init_views = random.sample(range(dataset_size), 10)
+            self.init_views = random.sample(range(dataset_size), num_inits)
         random.shuffle(self.init_views)
         self.load_its = {}
 
@@ -142,7 +145,7 @@ V20Seq4Inplace = partial(VNSeqMInplace, N=20, M=4, num_init_views=4, interval_ep
 
 schema_dict: Dict[str, BaseSchema] = {'all': All, "debug": V20Seq1Debug,
                                       "v20seq1_inplace": V20Seq1Inplace, "v10seq1_inplace": V10Seq1Inplace,
-                                      "v20seq4_inplace": V20Seq4Inplace, "v10": V10, "v20": V20,
+                                      "v20seq4_inplace": V20Seq4Inplace, "vk": VK,
                                       }
 
 override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2)), "africa": list(range(6, 14, 2)),

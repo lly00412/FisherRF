@@ -63,7 +63,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         train_idxs = args.train_idxs
     else:
         train_idxs = None
-    schema = schema_dict[args.schema](dataset_size=len(scene.getTrainCameras()), scene=scene, train_idxs=train_idxs)
+    schema = schema_dict[args.schema](dataset_size=len(scene.getTrainCameras()), scene=scene, train_idxs=train_idxs, num_inits=args.n_inits)
     print(f"schema: {schema.load_its}")
     scene.train_idxs = schema.init_views
     print(f"train cameras: {scene.train_idxs}")
@@ -327,6 +327,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_every_image", action="store_true", help="log every images during traing")
     parser.add_argument("--override_idxs", default=None, type=str, help="speical test idxs on uncertainty evaluation")
     parser.add_argument("--train_idxs", default=None, type=str, help="speical train idxs on fewshot training")
+    parser.add_argument("--n_inits", default=10, type=int, help="num of view for initialization")
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
