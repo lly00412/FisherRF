@@ -142,7 +142,7 @@ class VirtualCam(nn.Module):
         rot = self.get_rotation_by_direction(theta, direction)
 
         unit_direction = (look_at-self.camera_center)/torch.norm(look_at-self.camera_center)
-        random_step = (torch.rand(1) * 2 * stepsize) - stepsize
+        random_step = (torch.rand(1).to(stepsize) * 2 * stepsize) - stepsize
         new_center = self.camera_center + random_step * unit_direction
         trans_2 = self.get_translation_matrix(look_at, new_center)
 
