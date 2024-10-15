@@ -134,7 +134,7 @@ class VirtualCam(nn.Module):
         trans[:3, 3] = destination - origin
         return trans
 
-    def get_near_cam_by_look_at(self, look_at, theta=3, direction='u'):
+    def get_near_cam_by_look_at(self, look_at, theta=3, direction='u',stepsize=0.1):
         trans = self.get_translation_matrix(self.camera_center, look_at)
         rot = self.get_rotation_by_direction(theta, direction)
 

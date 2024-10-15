@@ -76,6 +76,8 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color,args
     # TODO: change theta to be different values and show the difference on uncertainty estimation
     if args.render_vcam:
         look_at, rd_c2w = extract_scene_center_and_C2W(depth, view)
+        D_median = depth.clone().flatten().median(0)
+        stepsize = 0.05*D_median
         rd_c2w = rd_c2w.to(depth.device)
         K = getIntrinsicMatrix(width=view.image_width, height=view.image_height,
                                fovX=view.FoVx, fovY=view.FoVy).to(depth.device)  # (4,4)
@@ -89,8 +91,8 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color,args
             vir_pred_imgs = []
             rd2virs = []
             for drt in ['u', 'd', 'l', 'r']:
-                # TODO: change theta here for different values
-                vir_view = GetVcam.get_near_cam_by_look_at(look_at=look_at, direction=drt,theta=t)
+                # TODO: move vcams by median depth
+                vir_view = GetVcam.get_near_cam_by_look_at(look_at=look_at, direction=drt,theta=t,step=stepsize)
                 vir_render_pkg = modified_render(vir_view, gaussians, pipeline, background)
                 vir_depth = vir_render_pkg['depth']
                 vir_pred_img = vir_render_pkg['render']
@@ -232,28 +234,29 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
             plt.close()
 
-            # save l2 diff
-            for t in args.thetas:
-                plt.figure(facecolor='white')
-                sns.heatmap(rests[f'rgb_l2_{t}'].detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
-                plt.savefig(os.path.join(eval_path, f"rgbl2_{t}_{view.image_name}.jpg"))
-                plt.close()
+            if args.render_vcam:
+                # save l2 diff
+                for t in args.thetas:
+                    plt.figure(facecolor='white')
+                    sns.heatmap(rests[f'rgb_l2_{t}'].detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+                    plt.savefig(os.path.join(eval_path, f"rgbl2_{t}_{view.image_name}.jpg"))
+                    plt.close()
 
-                plt.figure(facecolor='white')
-                sns.heatmap(rests[f'depth_l2_{t}'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
-                plt.savefig(os.path.join(eval_path, f"depthl2_{t}_{view.image_name}.jpg"))
-                plt.close()
+                    plt.figure(facecolor='white')
+                    sns.heatmap(rests[f'depth_l2_{t}'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
+                    plt.savefig(os.path.join(eval_path, f"depthl2_{t}_{view.image_name}.jpg"))
+                    plt.close()
 
-                # save var
-                # plt.figure(facecolor='white')
-                # sns.heatmap(rests[f'rgb_var_{t}'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
-                # plt.savefig(os.path.join(eval_path, f"rgbvar_{t}_{view.image_name}.jpg"))
-                # plt.close()
-                #
-                # plt.figure(facecolor='white')
-                # sns.heatmap(rests[f'depth_var_{t}'].detach().cpu(), square=True)
-                # plt.savefig(os.path.join(eval_path, f"depthvar_{t}_{view.image_name}.jpg"))
-                # plt.close()
+                    # save var
+                    # plt.figure(facecolor='white')
+                    # sns.heatmap(rests[f'rgb_var_{t}'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
+                    # plt.savefig(os.path.join(eval_path, f"rgbvar_{t}_{view.image_name}.jpg"))
+                    # plt.close()
+                    #
+                    # plt.figure(facecolor='white')
+                    # sns.heatmap(rests[f'depth_var_{t}'].detach().cpu(), square=True)
+                    # plt.savefig(os.path.join(eval_path, f"depthvar_{t}_{view.image_name}.jpg"))
+                    # plt.close()
 
             # save fisherRF
             sns.heatmap(torch.log(uncertanity_map / pixel_gaussian_counter).detach().cpu(), square=True)
@@ -404,7 +407,7 @@ if __name__ == "__main__":
     parser.add_argument("--depth_only", action="store_true", help="render depth only")
     parser.add_argument("--current", action="store_true", help="render uncertainty from current view")
     parser.add_argument("--render_vcam", action="store_true", help="render uncertainty from virtual cameras")
-    parser.add_argument("--thetas", nargs="+", type=int, default=[1,3,5,7],help="angle of turning virtual cameras")
+    parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
