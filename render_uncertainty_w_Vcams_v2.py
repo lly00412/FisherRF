@@ -76,7 +76,7 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color,args
     # TODO: change theta to be different values and show the difference on uncertainty estimation
     if args.render_vcam:
         look_at, rd_c2w = extract_scene_center_and_C2W(depth, view)
-        D_median = depth.clone().flatten().median(0)
+        D_median = depth.clone().flatten().median(0).values
         stepsize = 0.05*D_median
         rd_c2w = rd_c2w.to(depth.device)
         K = getIntrinsicMatrix(width=view.image_width, height=view.image_height,
@@ -92,7 +92,7 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color,args
             rd2virs = []
             for drt in ['u', 'd', 'l', 'r']:
                 # TODO: move vcams by median depth
-                vir_view = GetVcam.get_near_cam_by_look_at(look_at=look_at, direction=drt,theta=t,step=stepsize)
+                vir_view = GetVcam.get_near_cam_by_look_at(look_at=look_at, direction=drt,theta=t,stepsize=stepsize)
                 vir_render_pkg = modified_render(vir_view, gaussians, pipeline, background)
                 vir_depth = vir_render_pkg['depth']
                 vir_pred_img = vir_render_pkg['render']
