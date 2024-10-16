@@ -400,3 +400,6 @@ if __name__ == "__main__":
     safe_state(args.quiet,seed=args.seed)
 
     render_sets(model.extract(args), args.iteration, pipeline.extract(args), args)
+
+
+    # TODO: after collecting all the seeds, need to compute the variance of all settings
