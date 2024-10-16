@@ -134,6 +134,57 @@ class VirtualCam(nn.Module):
         trans[:3, 3] = destination - origin
         return trans
 
+    def random_points_on_sphere(self, N, r, O):
+        """
+        Generate N random points on a sphere of radius r centered at O.
+
+        Args:
+        - N: number of points
+        - r: radius of the sphere
+        - O: center of the sphere as a tensor of shape (3,), i.e., O = torch.tensor([x, y, z])
+
+        Returns:
+        - points: a tensor of shape (N, 3) representing the N random points on the sphere
+        """
+        points = torch.randn(N,3).to(O)
+        points = points / torch.norm(points, dim=1, keepdim=True)
+        points = points * r
+        points = points + O
+        return points
+
+    def get_N_near_cam_by_look_at(self, N, look_at, radiaus=0.1):
+        # sample new camera center
+        new_centers = self.random_points_on_sphere(N,radiaus, self.camera_center)
+        Vcams = []
+        for new_o in new_centers:
+            # create new camera pose by look at
+            forward = look_at - new_o
+            forward /= torch.linalg.norm(forward)
+            forward = forward.to(new_o)
+            world_up = torch.tensor([0, 1, 0]).to(new_o)  # need to be careful for the openGL system!!!
+            right = torch.cross(world_up, forward)
+            right /= torch.linalg.norm(right)
+            up = torch.cross(forward, right)
+
+            new_c2w = torch.eye(4).to(new_o)
+            new_c2w[:3, :3] = torch.vstack([right, up, forward]).T
+            new_c2w[:3, 3] = new_o
+
+            # return new camera
+            world_view_transform = torch.inverse(new_c2w).transpose(0, 1).to(self.data_device)
+            projection_matrix = self.gt_cam.projection_matrix
+            full_proj_transform = (
+                world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
+            VirtualCam = MiniCam(width=self.gt_cam.image_width, height=self.gt_cam.image_height,
+                                 fovy=self.gt_cam.FoVy, fovx=self.gt_cam.FoVx, znear=self.gt_cam.znear,
+                                 zfar=self.gt_cam.zfar,
+                                 world_view_transform=world_view_transform, full_proj_transform=full_proj_transform)
+            Vcams.append(VirtualCam)
+        return Vcams
+
+
+
+
     def get_near_cam_by_look_at(self, look_at, theta=3, direction='u',stepsize=0.1):
 
         # rotation the camera around scene center
