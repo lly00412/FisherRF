@@ -1,27 +1,12 @@
-EXP_PATH=./output/nerf_synthetic/ship_v10
+#!/bin/bash
 
-python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH} \
-      --render_vcam --n_vcam 2 4 6 8 --seed 29506
+MODEL_PATH=("nerf_synthetic/ship_v10" "m360/kitchen_v10" "tant/train_v20")
+SEEDS=(0 29506 1000 518 7463)
 
-python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH} \
-      --render_vcam --n_vcam 2 4 6 8 --seed 1000
-
-python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH} \
-      --render_vcam --n_vcam 2 4 6 8 --seed 518
-
-python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH} \
-      --render_vcam --n_vcam 2 4 6 8 --seed 7463
-
-EXP_PATH=./output/tant/train_v20
-
-python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH} \
-      --render_vcam --n_vcam 2 4 6 8 --seed 29506
-
-python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH} \
-      --render_vcam --n_vcam 2 4 6 8 --seed 1000
-
-python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH} \
-      --render_vcam --n_vcam 2 4 6 8 --seed 518
-
-python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH} \
-      --render_vcam --n_vcam 2 4 6 8 --seed 7463
+for seed in "${SEEDS[@]}"; do
+  for path in  "${MODEL_PATH[@]}"; do
+    echo "Running script with seed: $seed and path: $path"
+    python render_uncertainty_w_Vcams_v2.py -m ./output/$path \
+          --render_vcam --n_vcam 6 --seed $seed --r_scale 0.05 0.1 0.25 0.5
+    done
+  done
