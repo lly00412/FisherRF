@@ -53,7 +53,7 @@ def capture(self):
     )
 
 @torch.no_grad()
-def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C, hessian_color_D,args):
+def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,args):
     ###########################
     #  rendering RGB, depth & error
     ###########################
@@ -72,8 +72,8 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C, h
     uncertanity_map_C = reduce(render_pkg["render"], "c h w -> h w", "mean")
 
     # compute H by render Depth
-    render_pkg_D = modified_render(view, gaussians, pipeline, background, override_color=hessian_color_D)
-    uncertanity_map_D = reduce(render_pkg["render"], "c h w -> h w", "mean")
+    # render_pkg_D = modified_render(view, gaussians, pipeline, background, override_color=hessian_color_D)
+    # uncertanity_map_D = reduce(render_pkg["render"], "c h w -> h w", "mean")
 
     ###########################
     #  rendering vcams
@@ -137,7 +137,7 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C, h
             rgb_l2 = rgb_l2.squeeze(0)
             rests[f'rgb_l2({N} vcams)'] = rgb_l2
 
-    return pred_img, uncertanity_map_C, uncertanity_map_D, pixel_gaussian_counter, depth, rests
+    return pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests
 
 def render_set(model_path, name, iteration, train_views, test_views, gaussians, pipeline, background, perturb_scale=1., camera_extent=None, args=None):
     render_path = os.path.join(model_path, "renders")
@@ -168,7 +168,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     device = params[0].device
     # H_train = torch.zeros(sum(p.numel() for p in params), device=params[0].device, dtype=params[0].dtype)
     H_per_gaussian_C = torch.zeros(params[0].shape[0], device=params[0].device, dtype=params[0].dtype)
-    H_per_gaussian_D = torch.zeros(params[0].shape[0], device=params[0].device, dtype=params[0].dtype)
+    # H_per_gaussian_D = torch.zeros(params[0].shape[0], device=params[0].device, dtype=params[0].dtype)
     if not args.depth_only:
         # TODO: We can also use all the views, here the train views are just a subset of training cameras
         for idx, view in enumerate(tqdm(itertools.chain(train_views, test_views), desc="Rendering progress")):
@@ -177,7 +177,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
 
             render_pkg = modified_render(view, gaussians, pipeline, background)
             pred_img = render_pkg["render"]
-            depth = render_pkg["depth"]
+            # depth = render_pkg["depth"]
             pred_img.backward(gradient=torch.ones_like(pred_img),retain_graph=True)
             pixel_gaussian_counter = render_pkg["pixel_gaussian_counter"]
             # render_pkg = modified_render(view, gaussians, pipeline, background, override_color=torch.ones_like(params[1]))
@@ -185,9 +185,9 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             # render_pkg = modified_render(view, gaussians, pipeline, background, override_color=H_per_gaussian.detach())
             optim.zero_grad(set_to_none=True)
 
-            depth.backward(gradient=torch.ones_like(depth),retain_graph=True)
-            H_per_gaussian_D += sum([reduce(p.grad.detach(), "n ... -> n", "sum") for p in params])
-            optim.zero_grad(set_to_none=True)
+            # depth.backward(gradient=torch.ones_like(depth),retain_graph=True)
+            # H_per_gaussian_D += sum([reduce(p.grad.detach(), "n ... -> n", "sum") for p in params])
+            # optim.zero_grad(set_to_none=True)
 
             split = "train" if idx < len(train_views) else "test"
 
@@ -196,7 +196,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
         H_per_gaussian_C += 1
 
     hessian_color_C = repeat(H_per_gaussian_C.detach(), "n -> n c", c=3)
-    hessian_color_D = repeat(H_per_gaussian_D.detach(), "n -> n c", c=3)
+    # hessian_color_D = repeat(H_per_gaussian_D.detach(), "n -> n c", c=3)
 
     ROCs = {}
     AUCs = {}
@@ -209,8 +209,8 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             gaussian_depths = pts3d_cam[:, 2, None]
 
             cur_hessian_color_C = hessian_color_C * gaussian_depths.clamp(min=0)
-            cur_hessian_color_D = hessian_color_D * gaussian_depths.clamp(min=0)
-            pred_img, uncertanity_map_C, uncertanity_map_D, pixel_gaussian_counter, depth, rests = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color_C, cur_hessian_color_D, args)
+            # cur_hessian_color_D = hessian_color_D * gaussian_depths.clamp(min=0)
+            pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color_C, args)
 
             ################################
             #  save all outputs
@@ -247,13 +247,13 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             plt.savefig(os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg"))
             plt.close()
 
-            sns.heatmap(torch.log(uncertanity_map_D / pixel_gaussian_counter).detach().cpu(), square=True)
-            plt.savefig(os.path.join(eval_path, f"fisher_D_{view.image_name}.jpg"))
-            plt.close()
+            # sns.heatmap(torch.log(uncertanity_map_D / pixel_gaussian_counter).detach().cpu(), square=True)
+            # plt.savefig(os.path.join(eval_path, f"fisher_D_{view.image_name}.jpg"))
+            # plt.close()
 
             # save raw output
             save_rests = {}
-            save_rests['fisher_D'] = uncertanity_map_D.cpu()
+            # save_rests['fisher_D'] = uncertanity_map_D.cpu()
             for k in rests.keys():
                 save_rests[k] = rests[k].cpu()
             np.savez(os.path.join(eval_path, f"uncertainty_{idx:03d}_{view.image_name}.npz"),
@@ -266,8 +266,8 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             ################################
             opt_label = 'rgb_err'
             values = {
-                'fisherRF_C':uncertanity_map_C[mask].flatten(),
-                'fisherRF_D': uncertanity_map_D[mask].flatten(),
+                'fisherRF':uncertanity_map_C[mask].flatten(),
+                # 'fisherRF_D': uncertanity_map_D[mask].flatten(),
             }
 
             for k in rests.keys():
@@ -340,7 +340,7 @@ def render_set_current(model_path, name, iteration, train_views, test_views, gau
             # sns.heatmap(torch.log(uncertanity_map / pixel_gaussian_counter).clamp(min=0).detach().cpu(), square=True)
             # plt.savefig(f"./uncern.jpg")
             # plt.savefig(f"./uncern_all.jpg")
-            plt.clf()
+            # plt.clf()
 
             torchvision.utils.save_image(pred_img.detach(), os.path.join(eval_path, f"render_{view.image_name}.png"))
             sns.heatmap(torch.log(uncertanity_map / pixel_gaussian_counter).clamp(min=0).detach().cpu(), square=True)
