@@ -1,6 +1,6 @@
 #!/bin/bash
 
-MODEL_PATH=("nerf_synthetic/ship_v10" "m360/kitchen_v10" "tant/train_v20")
+MODEL_PATH=("m360/kitchen_v10" "nerf_synthetic/ship_v10" "tant/train_v20")
 SEEDS=(0 29506 1000 518 7463)
 
 for seed in "${SEEDS[@]}"; do

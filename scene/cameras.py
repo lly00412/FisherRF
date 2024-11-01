@@ -146,7 +146,8 @@ class VirtualCam(nn.Module):
         Returns:
         - points: a tensor of shape (N, 3) representing the N random points on the sphere
         """
-        points = torch.randn(N,3).to(O)
+        points = torch.rand(N,3).to(O)
+        points = 2*points-torch.ones_like(points)
         points = points / torch.norm(points, dim=1, keepdim=True)
         points = points * r
         points = points + O

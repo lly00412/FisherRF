@@ -116,10 +116,15 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
                     vir_depths.append(vir_depth.unsqueeze(0))
                     vir_pred_imgs.append(vir_pred_img)
                 vir_depths = torch.stack(vir_depths)
+                vir_pred_imgs = torch.stack(vir_pred_imgs)
                 rd2virs = torch.stack(rd2virs)
-                vir2rd_pred_imgs, vir2rd_depths, nv_mask = backwarp(img_src=rd_pred_imgs, depth_src=vir_depths,
+                vir2rd_pred_imgs, vir2rd_depths, nv_mask = backwarp(img_src=vir_pred_imgs, depth_src=vir_depths,
                                                                     depth_tgt=rd_depths,
                                                                     tgt2src_transform=rd2virs)
+                breakpoint()
+                torchvision.utils.save_image(pred_img.detach(),"./output/m360/debug/rgb_pred.jpg")
+                torchvision.utils.save_image(vir_pred_imgs[0].detach(), "./output/m360/debug/vir_rgb_pred_0.jpg")
+                torchvision.utils.save_image(vir2rd_pred_imgs[0].detach(), "./output/m360/debug/vir2rd_rgb_pred_0.jpg")
                 ################################
                 #  compute uncertainty by l2 diff
                 ################################
@@ -196,6 +201,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             split = "train" if idx < len(train_views) else "test"
 
             torchvision.utils.save_image(pred_img.detach(), os.path.join(render_path, f"{split}_{view.image_name}.png"))
+
     else:
         H_per_gaussian_C += 1
 
