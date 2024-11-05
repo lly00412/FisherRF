@@ -135,7 +135,10 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
                 vir2rd_depth[numels > 0] = vir2rd_depth_sum[numels > 0] / numels[numels > 0]
                 depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth) ** 2
                 depth_l2 = depth_l2.squeeze(0)
-                rests[f'depth_l2({N} vcams, {scale} med)'] = depth_l2
+                MIN_VALUE = depth_l2.flatten().min()
+                MAX_VALUE = depth_l2.flatten().max()
+                norm_depth_sigmas = (depth_l2 - MIN_VALUE) / (MAX_VALUE- MIN_VALUE)
+                # rests[f'depth_l2({N} vcams, {scale} med)'] = depth_l2
 
                 # rgb uncertainty
                 vir2rd_pred_sum = vir2rd_pred_imgs.sum(0).mean(0, keepdim=True)
@@ -144,7 +147,11 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
                 vir2rd_pred[numels > 0] = vir2rd_pred_sum[numels > 0] / numels[numels > 0]
                 rgb_l2 = (rendering_ - vir2rd_pred) ** 2
                 rgb_l2 = rgb_l2.squeeze(0)
-                rests[f'rgb_l2({N} vcams, {scale} med)'] = rgb_l2
+                MIN_VALUE = rgb_l2.flatten().min()
+                MAX_VALUE = rgb_l2.flatten().max()
+                norm_rgb_sigmas = (rgb_l2 - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+                vcu = norm_rgb_sigmas + norm_depth_sigmas
+                rests[f'vcu({N} vcams, {scale} med)'] = vcu
 
     return pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests
 
@@ -244,13 +251,8 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
                 for N in args.n_vcam:
                     for scale in args.r_scale:
                         plt.figure(facecolor='white')
-                        sns.heatmap(rests[f'rgb_l2({N} vcams, {scale} med)'].detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
-                        plt.savefig(os.path.join(eval_path, f"rgbl2_{N}_vcams_{scale}_med_{view.image_name}.jpg"))
-                        plt.close()
-
-                        plt.figure(facecolor='white')
-                        sns.heatmap(rests[f'depth_l2({N} vcams, {scale} med)'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
-                        plt.savefig(os.path.join(eval_path, f"depthl2_{N}_vcams_{scale}_med_{view.image_name}.jpg"))
+                        sns.heatmap(rests[f'vcu({N} vcams, {scale} med)'].detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+                        plt.savefig(os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg"))
                         plt.close()
 
             # save fisherRF

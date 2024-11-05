@@ -42,6 +42,7 @@ class VK(BaseSchema):
             if len(self.init_views)>num_inits:
                 self.init_views = random.sample(self.init_views, num_inits)
         else:
+            random.seed(0)
             self.init_views = random.sample(range(dataset_size), num_inits)
         if num_emsemble is not None:
             emsemble_seed = kwargs.get("emsemble_seed")
