@@ -134,7 +134,26 @@ class VirtualCam(nn.Module):
         trans[:3, 3] = destination - origin
         return trans
 
-    def random_points_on_sphere(self, N, r, O):
+    # def random_points_on_sphere(self, N, r, O):
+    #     """
+    #     Generate N random points on a sphere of radius r centered at O.
+    #
+    #     Args:
+    #     - N: number of points
+    #     - r: radius of the sphere
+    #     - O: center of the sphere as a tensor of shape (3,), i.e., O = torch.tensor([x, y, z])
+    #
+    #     Returns:
+    #     - points: a tensor of shape (N, 3) representing the N random points on the sphere
+    #     """
+    #     points = torch.rand(N,3).to(O)
+    #     points = 2*points-torch.ones_like(points)
+    #     points = points / torch.norm(points, dim=1, keepdim=True)
+    #     points = points * r
+    #     points = points + O
+    #     return points
+
+    def random_points_on_sphere(self, N, r, O, threshold = 0.3):
         """
         Generate N random points on a sphere of radius r centered at O.
 
@@ -146,11 +165,35 @@ class VirtualCam(nn.Module):
         Returns:
         - points: a tensor of shape (N, 3) representing the N random points on the sphere
         """
-        points = torch.rand(N,3).to(O)
-        points = 2*points-torch.ones_like(points)
-        points = points / torch.norm(points, dim=1, keepdim=True)
-        points = points * r
-        points = points + O
+        # points = torch.rand(N,3).to(O)
+        # points = 2*points-torch.ones_like(points)
+        # points = points / torch.norm(points, dim=1, keepdim=True)
+        # points = points * r + O
+        device = O.device
+        points = []  # List to store valid points
+
+        while len(points) < N:
+            # Sample a random point within the unit sphere
+            point = 2 * torch.rand(3, device=device) - 1  # Initial random point in [-1, 1]^3
+            point = point / torch.norm(point)  # Normalize to sphere surface
+            radius = torch.rand(1, device=device)  # Random radius in [0, 1]
+            point = point * radius  # Scale to be within the sphere
+
+            # Check distance from the origin
+            if torch.norm(point) < threshold:
+                continue  # Discard point if too close to the origin
+
+            # Check distances from all existing points
+            if len(points) > 0:
+                existing_points = torch.stack(points)  # Stack points to a tensor
+                distances = torch.norm(existing_points - point, dim=1)
+                if torch.any(distances < threshold):
+                    continue  # Discard point if too close to any existing point
+            points.append(point)
+
+        points = torch.stack(points)
+        # rescale to translate to the target place
+        points = points * r + O
         return points
 
     def get_N_near_cam_by_look_at(self, N, look_at, radiaus=0.1):

@@ -36,12 +36,18 @@ class VK(BaseSchema):
         dataset_size = kwargs.get("dataset_size")
         obj = kwargs.get("train_idxs")
         num_inits = kwargs.get("num_inits")
+        num_emsemble = kwargs.get("num_emsemble")
         if obj in override_train_idxs_dict.keys():
             self.init_views = override_train_idxs_dict[obj]
             if len(self.init_views)>num_inits:
                 self.init_views = random.sample(self.init_views, num_inits)
         else:
             self.init_views = random.sample(range(dataset_size), num_inits)
+        if num_emsemble is not None:
+            emsemble_seed = kwargs.get("emsemble_seed")
+            random.seed(emsemble_seed)
+            self.init_views = random.sample(self.init_views, num_emsemble)
+
         random.shuffle(self.init_views)
         self.load_its = {}
 
@@ -153,4 +159,4 @@ override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2))
 
 override_train_idxs_dict: Dict[str, List[int]] = {"basket": list(range(43, 50,2)), "africa": list(range(5, 14, 2)),
                                             "statue": list(range(67, 76, 2)), "torch": list(range(8, 17, 2)),
-                                                  "ship": [0,4,22,35,36,43,57,60,63,76]}
+                                                  "nerf_synthetic": [0,4,22,35,36,43,57,60,63,76]}
