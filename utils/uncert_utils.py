@@ -10,8 +10,31 @@ def compute_roc(opt,est,intervals = 10): # input torch.tensor
     ROC_points = [opt[s].mean().item() if s.any() else 0.0 for s in subs]
     ROC.extend(ROC_points)
     ROC_tensor = torch.tensor(ROC)
-    AUC = torch.trapz(ROC_tensor, dx=100.0 / intervals).item()
+    AUC = torch.trapz(ROC_tensor, dx=1.0 / intervals).item()
     return ROC,AUC
+
+def compute_ause(opt,est,intervals = 10): # input torch.tensor
+    quants = [100. / intervals * t for t in range(1, intervals + 1)]
+    thres = [torch.quantile(est, q / 100.0) for q in quants]
+
+    opt_roc = []
+    opt_subs = [opt <= t for t in thres]
+    opt_points = [opt[s].mean().item() if s.any() else 0.0 for s in opt_subs]
+    opt_roc.extend(opt_points)
+    opt_roc = torch.tensor(opt_roc)
+
+    est_roc = []
+    est_subs = [est <= t for t in thres]
+    est_points = [opt[s].mean().item() if s.any() else 0.0 for s in est_subs]
+    est_roc.extend(est_points)
+    est_roc = torch.tensor(est_roc)
+
+    max_val = opt_roc.max()
+    opt_roc_norm = opt_roc / max_val
+    est_roc_norm = est_roc / max_val
+    ause = torch.trapz(torch.abs(est_roc_norm-opt_roc_norm), dx=1.0 / intervals).item()
+
+    return est_roc,ause
 
 def plot_roc(ROC_dict,fig_name, opt_label='rgb_err',intervals = 10):
     quants = [100. / intervals * t for t in range(1, intervals + 1)]

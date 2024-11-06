@@ -160,4 +160,4 @@ override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2))
 
 override_train_idxs_dict: Dict[str, List[int]] = {"basket": list(range(43, 50,2)), "africa": list(range(5, 14, 2)),
                                             "statue": list(range(67, 76, 2)), "torch": list(range(8, 17, 2)),
-                                                  "nerf_synthetic": [0,4,22,35,36,43,57,60,63,76]}
+                                                  "blender": [0,4,22,35,36,43,57,60,63,76,1,2,51,48,80,99,25,44,54,49]}

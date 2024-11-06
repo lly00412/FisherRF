@@ -2,9 +2,9 @@ import os
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
-from gaussian_renderer import render, network_gui, modified_render
+from gaussian_renderer import render, network_gui, modified_render, render_active
 import sys
-from scene import Scene, GaussianModel
+from scene import Scene, GaussianModel, GaussianModel_w_var
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
@@ -54,7 +54,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     base_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    if args.method == 'variance':
+        gaussians = GaussianModel_w_var(dataset.sh_degree)
+    else:
+        gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     
@@ -109,7 +112,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 net_image_bytes = None
                 custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
                 if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
+                    if args.method == "variance":
+                        net_image = render_active(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
+                    else:
+                        net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                 network_gui.send(net_image_bytes, dataset.source_path)
                 if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
@@ -157,13 +163,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+        if args.method == "variance":
+            render_pkg = render_active(viewpoint_cam, gaussians, pipe, background)
+        else:
+            render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        if args.method == "variance":
+            variance = render_pkg["variance"]
+            variance = torch.where(variance < .1, .1, variance)
+            # NLL + SSIM Loss
+            error = ((image - gt_image) ** 2 / 2).div(variance) + torch.log(variance) / 2
+            loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        else:
+            # L1 + SSIM
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
         loss.backward()
 
         iter_end.record()

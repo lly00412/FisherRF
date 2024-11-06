@@ -15,15 +15,17 @@ import json
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
+from scene.gaussian_model_w_variance import GaussianModel as GaussianModel_w_var
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON, load_cam_info
 from tqdm import tqdm
+from typing import Union
 
 class Scene:
 
-    gaussians : GaussianModel
+    gaussians : Union[GaussianModel, GaussianModel_w_var]
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0],
+    def __init__(self, args : ModelParams, gaussians : Union[GaussianModel, GaussianModel_w_var], load_iteration=None, shuffle=True, resolution_scales=[1.0],
                   llffhold=8, override_train_idxs=None, override_test_idxs=None):
         """b
         :param path: Path to colmap scene main folder.
