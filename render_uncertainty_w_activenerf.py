@@ -53,7 +53,7 @@ def capture(self):
     )
 
 @torch.no_grad()
-def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,args):
+def render_uncertainty(view, gaussians, pipeline, background):
     ###########################
     #  rendering RGB, depth & error
     ###########################
@@ -62,14 +62,13 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
     pred_img = render_pkg["render"]
     # pred_img.backward(gradient=torch.ones_like(pred_img))
     gt_img = view.original_image[0:3, :, :]
-    pixel_gaussian_counter = render_pkg["pixel_gaussian_counter"]
     rgb_err = torch.mean((pred_img - gt_img)**2,0)
     rests['rgb_err'] = rgb_err
 
     # compute H by render RGB
-    render_pkg = render_active(view, gaussians, pipeline, background, override_color=hessian_color_C)
     depth = render_pkg["depth"]
-    uncertanity_map_C = reduce(render_pkg["render"], "c h w -> h w", "mean")
+    uncertanity_map_C = render_pkg["variance"]
+    breakpoint()
 
     # compute H by render Depth
     # render_pkg_D = modified_render(view, gaussians, pipeline, background, override_color=hessian_color_D)
@@ -153,7 +152,7 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
                 vcu = norm_rgb_sigmas + norm_depth_sigmas
                 rests[f'vcu({N} vcams, {scale} med)'] = vcu
 
-    return pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests
+    return pred_img, uncertanity_map_C, depth, rests
 
 def render_set(model_path, name, iteration, train_views, test_views, gaussians, pipeline, background, perturb_scale=1., camera_extent=None, args=None):
     render_path = os.path.join(model_path, "renders")
