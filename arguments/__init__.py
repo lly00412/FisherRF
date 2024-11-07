@@ -109,3 +109,23 @@ def get_combined_args(parser : ArgumentParser):
         if v != None:
             merged_dict[k] = v
     return Namespace(**merged_dict)
+
+def get_emsemble_args(args_cmdline, root_path, emseemble_seed=0):
+    args_cmdline.model_path = os.path.join(root_path,str(emseemble_seed))
+
+    try:
+        cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
+        print("Looking for config file in", cfgfilepath)
+        with open(cfgfilepath) as cfg_file:
+            print("Config file found: {}".format(cfgfilepath))
+            cfgfile_string = cfg_file.read()
+    except TypeError:
+        print("Config file not found at")
+        pass
+    args_cfgfile = eval(cfgfile_string)
+
+    merged_dict = vars(args_cfgfile).copy()
+    for k,v in vars(args_cmdline).items():
+        if v != None:
+            merged_dict[k] = v
+    return Namespace(**merged_dict)

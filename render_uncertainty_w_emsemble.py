@@ -10,6 +10,7 @@
 #
 
 import torch
+import sys
 from scene import Scene
 import os
 from tqdm import tqdm
@@ -18,7 +19,7 @@ from gaussian_renderer import render
 import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
-from arguments import ModelParams, PipelineParams, get_combined_args
+from arguments import ModelParams, PipelineParams, get_combined_args, get_emsemble_args
 from gaussian_renderer import GaussianModel
 import numpy as np
 from utils.camera_utils import rand_rotation_matrix
@@ -53,7 +54,7 @@ def capture(self):
     )
 
 @torch.no_grad()
-def render_uncertainty_for_emsemble(dataset : ModelParams, iteration : int, pipeline : PipelineParams, args):
+def render_uncertainty_for_emsemble(dataset : ModelParams, iteration : int, pipeline : PipelineParams, root_path,args):
     gaussians = GaussianModel(dataset.sh_degree)
     # use every frames
     if hasattr(args, 'override_idxs'):
@@ -68,124 +69,117 @@ def render_uncertainty_for_emsemble(dataset : ModelParams, iteration : int, pipe
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-    render_path = os.path.join(args.model_path, "emsemble_renders")
-    roc_path = os.path.join(args.model_path, "emsemble_roc")
+    render_path = os.path.join(root_path, "emsemble_renders")
+    roc_path = os.path.join(root_path, "emsemble_roc")
+    eval_path = os.path.join(root_path, "emsemble_eval")
+    depth_path = os.path.join(root_path, "emsemble_depth")
+    error_path = os.path.join(root_path, "emsemble_error")
+
     makedirs(render_path, exist_ok=True)
+    makedirs(eval_path, exist_ok=True)
+    makedirs(depth_path, exist_ok=True)
+    makedirs(error_path, exist_ok=True)
     makedirs(roc_path, exist_ok=True)
 
     test_views = scene.getTestCameras()
+    AUCs = {}
+    ROCs = {}
+    AUSEs = {}
     with torch.no_grad():
         for idx, view in enumerate(tqdm(test_views, desc="Rendering on test set")):
             gt_img = view.original_image[0:3, :, :]
             depths = []
             pred_imgs = []
             for seed in args.emsemble_seeds:
-                render_path = os.path.join(args.model_path,seed, "renders")
-                render_file = os.path.join(render_path,f"emsemble_{idx:03d}_{view.image_name}.npz")
-                emsemble_outputs = np.load(file=render_file,allow_pickle=True)
-                depths.append(emsemble_outputs['depth'])
-                pred_imgs.append(emsemble_outputs['pred_img'])
+                output_path = os.path.join(root_path,str(seed), "renders")
+                output_file = os.path.join(output_path,f"emsemble_{idx:03d}_{view.image_name}.npz")
+                emsemble_outputs = np.load(file=output_file,allow_pickle=True)
+                depths.append(torch.from_numpy(emsemble_outputs['depth']))
+                pred_imgs.append(torch.from_numpy(emsemble_outputs['pred_img']))
+            depths = torch.stack(depths)
+            pred_imgs = torch.stack(pred_imgs)
+            expected_depth = depths.mean(0)
+            expected_pred_img = pred_imgs.mean(0)
+            depth_std = torch.std(depths,dim=0)
+            rgb_std = torch.std(pred_imgs,dim=0).mean(0)
+            rgb_err = torch.mean((expected_pred_img - gt_img.cpu().numpy())**2,0)
 
-    ###########################
-    #  rendering RGB, depth & error
-    ###########################
-    rests = {}
-    render_pkg = modified_render(view, gaussians, pipeline, background)
-    pred_img = render_pkg["render"]
-    # pred_img.backward(gradient=torch.ones_like(pred_img))
-    gt_img = view.original_image[0:3, :, :]
-    pixel_gaussian_counter = render_pkg["pixel_gaussian_counter"]
-    rgb_err = torch.mean((pred_img - gt_img)**2,0)
-    rests['rgb_err'] = rgb_err
+            # save outputs
+            torchvision.utils.save_image(expected_pred_img, os.path.join(render_path, f"test_{view.image_name}.png"))
+            mask = (expected_depth > 0.)
 
-    # compute H by render RGB
-    render_pkg = modified_render(view, gaussians, pipeline, background, override_color=hessian_color_C)
-    depth = render_pkg["depth"]
-    uncertanity_map_C = reduce(render_pkg["render"], "c h w -> h w", "mean")
+            # save depth
+            plt.figure(facecolor='white')
+            sns.heatmap(expected_depth.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+            plt.savefig(os.path.join(depth_path, f"{view.image_name}.jpg"))
+            plt.close()
 
-    # compute H by render Depth
-    # render_pkg_D = modified_render(view, gaussians, pipeline, background, override_color=hessian_color_D)
-    # uncertanity_map_D = reduce(render_pkg["render"], "c h w -> h w", "mean")
+            # save error
+            plt.figure(facecolor='white')
+            sns.heatmap(rgb_err.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+            plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
+            plt.close()
 
-    ###########################
-    #  rendering vcams
-    ###########################
-    # TODO: change theta to be different values and show the difference on uncertainty estimation
-    if args.render_vcam:
+            # save uncertainty
+            sns.heatmap(torch.log(depth_std).detach().cpu(), square=True)
+            plt.savefig(os.path.join(eval_path, f"depth_std_{view.image_name}.jpg"))
+            plt.close()
 
-        # create sampling sphere by median depth of the scene center
-        look_at, rd_c2w = extract_scene_center_and_C2W(depth, view)
-        D_median = depth.clone().flatten().median(0).values
-        # radiaus = 0.1*D_median
+            sns.heatmap(torch.log(rgb_std).detach().cpu(), square=True)
+            plt.savefig(os.path.join(eval_path, f"rgb_std_{view.image_name}.jpg"))
+            plt.close()
 
-        rd_c2w = rd_c2w.to(depth.device)
-        K = getIntrinsicMatrix(width=view.image_width, height=view.image_height,
-                               fovX=view.FoVx, fovY=view.FoVy).to(depth.device)  # (4,4)
-        GetVcam = VirtualCam(view)
-        backwarp = BackwardWarping(out_hw=(view.image_height, view.image_width),
-                                   device=depth.device, K=K)
+            np.savez(os.path.join(eval_path, f"uncertainty_{idx:03d}_{view.image_name}.npz"),
+                     depth_std=depth_std.cpu(), rgb_std=rgb_std.cpu(),
+                     depth=expected_depth.cpu(), rgb=expected_pred_img.cpu(),
+                     )
 
-        # random sampling n virtual camera at a sphere centering at real camera
-        for N in args.n_vcam:
-            for scale in args.r_scale:
-                radiaus = scale*D_median
-                Vcams = GetVcam.get_N_near_cam_by_look_at(N, look_at=look_at, radiaus=radiaus)
+            ################################
+            #  compute auc
+            ################################
+            opt_label = 'rgb_err'
+            values = {
+                'rgb_err': rgb_err[mask].flatten(),
+                 'depth_std': depth_std[mask].flatten(),
+                'rgb_std': rgb_std[mask].flatten(),
+            }
 
-                rd_depth = depth.clone().unsqueeze(0).unsqueeze(0)
-                rd_depths = rd_depth.repeat(N, 1, 1, 1)
-                rd_pred_imgs = pred_img.clone().unsqueeze(0).repeat(N, 1, 1, 1)
+            rocs = {}
+            aucs = {}
+            auses = {}
+            for val in values.keys():
+                roc, auc = compute_roc(opt=values[opt_label], est=values[val], intervals=20)
+                _, ause = compute_ause(opt=values[opt_label], est=values[val], intervals=100)
+                rocs[val] = np.array(roc)
+                aucs[val] = auc
+                auses[val] = ause
+                if val not in ROCs.keys():
+                    ROCs[val] = [roc]
+                    AUCs[val] = [auc]
+                    AUSEs[val] = [ause]
+                else:
+                    ROCs[val].append(roc)
+                    AUCs[val].append(auc)
+                    AUSEs[val].append(ause)
 
-                vir_depths = []
-                vir_pred_imgs = []
-                rd2virs = []
-                for vir_view in Vcams:
-                    vir_render_pkg = modified_render(vir_view, gaussians, pipeline, background)
-                    vir_depth = vir_render_pkg['depth']
-                    vir_pred_img = vir_render_pkg['render']
-                    vir_w2c = vir_view.world_view_transform.transpose(0, 1)
-                    rd2vir = vir_w2c @ rd_c2w
-                    rd2virs.append(rd2vir)
-                    vir_depths.append(vir_depth.unsqueeze(0))
-                    vir_pred_imgs.append(vir_pred_img)
-                vir_depths = torch.stack(vir_depths)
-                vir_pred_imgs = torch.stack(vir_pred_imgs)
-                rd2virs = torch.stack(rd2virs)
-                vir2rd_pred_imgs, vir2rd_depths, nv_mask = backwarp(img_src=vir_pred_imgs, depth_src=vir_depths,
-                                                                    depth_tgt=rd_depths,
-                                                                    tgt2src_transform=rd2virs)
-                breakpoint()
-                torchvision.utils.save_image(pred_img.detach(),"./output/m360/debug/rgb_pred.jpg")
-                torchvision.utils.save_image(vir_pred_imgs[0].detach(), "./output/m360/debug/vir_rgb_pred_0.jpg")
-                torchvision.utils.save_image(vir2rd_pred_imgs[0].detach(), "./output/m360/debug/vir2rd_rgb_pred_0.jpg")
-                ################################
-                #  compute uncertainty by l2 diff
-                ################################
-                # depth uncertainty
-                vir2rd_depth_sum = vir2rd_depths.sum(0)
-                numels = float(N) - nv_mask.sum(0)
-                vir2rd_depth = torch.zeros_like(rd_depth.squeeze(0))
-                vir2rd_depth[numels > 0] = vir2rd_depth_sum[numels > 0] / numels[numels > 0]
-                depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth) ** 2
-                depth_l2 = depth_l2.squeeze(0)
-                MIN_VALUE = depth_l2.flatten().min()
-                MAX_VALUE = depth_l2.flatten().max()
-                norm_depth_sigmas = (depth_l2 - MIN_VALUE) / (MAX_VALUE- MIN_VALUE)
-                # rests[f'depth_l2({N} vcams, {scale} med)'] = depth_l2
+            plot_file = os.path.join(roc_path, '{0:05d}'.format(idx) + ".jpg")
+            auc_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "auc.txt")
+            ause_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "ause.txt")
+            plot_roc(ROC_dict=rocs, fig_name=plot_file, opt_label=opt_label, intervals=20)
+            write_auc(AUC_dict=aucs, txt_name=auc_file)
+            write_auc(AUC_dict=auses, txt_name=ause_file)
 
-                # rgb uncertainty
-                vir2rd_pred_sum = vir2rd_pred_imgs.sum(0).mean(0, keepdim=True)
-                rendering_ = pred_img.mean(0, keepdim=True)
-                vir2rd_pred = torch.zeros_like(rendering_)
-                vir2rd_pred[numels > 0] = vir2rd_pred_sum[numels > 0] / numels[numels > 0]
-                rgb_l2 = (rendering_ - vir2rd_pred) ** 2
-                rgb_l2 = rgb_l2.squeeze(0)
-                MIN_VALUE = rgb_l2.flatten().min()
-                MAX_VALUE = rgb_l2.flatten().max()
-                norm_rgb_sigmas = (rgb_l2 - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
-                vcu = norm_rgb_sigmas + norm_depth_sigmas
-                rests[f'vcu({N} vcams, {scale} med)'] = vcu
+        for val in ROCs.keys():
+            ROCs[val] = np.array(ROCs[val]).mean(0)
+            AUCs[val] = np.array(AUCs[val]).mean(0)
+            AUSEs[val] = np.array(AUSEs[val]).mean(0)
+        summary_plot = os.path.join(roc_path, f'train' + ".png")
+        summary_auc = os.path.join(roc_path, f'train' + ".txt")
+        summary_ause = os.path.join(roc_path, f'train' + "ause.txt")
+        plot_roc(ROC_dict=ROCs, fig_name=summary_plot, opt_label=opt_label, intervals=20)
+        write_auc(AUC_dict=AUCs, txt_name=summary_auc)
+        write_auc(AUC_dict=AUSEs, txt_name=summary_ause)
 
-    return pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests
 
 def render_set(model_path, name, iteration, train_views, test_views, gaussians, pipeline, background, perturb_scale=1., camera_extent=None, args=None):
     render_path = os.path.join(model_path, "renders")
@@ -293,17 +287,23 @@ if __name__ == "__main__":
     parser.add_argument("--current", action="store_true", help="render uncertainty from current view")
     parser.add_argument("--emsemble_seeds", nargs="+", default=[0,500,1000,2000,600], type=int, help="seeds for emsemble models")
     # parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
-    args = get_combined_args(parser)
-    print("Rendering " + args.model_path)
-    emsemble_path = args.model_path
 
-    # Initialize system state (RNG)
-    safe_state(args.quiet,seed=args.seed)
+    cmdlne_string = sys.argv[1:]
+    cfgfile_string = "Namespace()"
+    args_cmdline = parser.parse_args(cmdlne_string)
+    emsemble_seeds = args_cmdline.emsemble_seeds
+    emsemble_path = args_cmdline.model_path
 
-    for seed in args.emsemble_seeds:
-        args.model_path = os.path.join(emsemble_path,seed)
+    for seed in emsemble_seeds:
+        args = get_emsemble_args(args_cmdline, root_path=emsemble_path,emseemble_seed=seed)
+        print("Rendering " + args.model_path)
+
+        # Initialize system state (RNG)
+        safe_state(args.quiet, seed=args.seed)
         render_sets(model.extract(args), args.iteration, pipeline.extract(args), args)
 
-    render_uncertainty_for_emsemble(model.extract(args), args.iteration, pipeline.extract(args), args):
+    # Initialize system state (RNG)
+    safe_state(args.quiet, seed=args.seed)
+    render_uncertainty_for_emsemble(model.extract(args), args.iteration, pipeline.extract(args), emsemble_path, args)
 
     # TODO: after collecting all the seeds, need to compute the variance of all settings
