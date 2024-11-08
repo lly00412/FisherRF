@@ -78,8 +78,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             skip_connections=None,
                             activation=nn.ReLU,
                             out_activation=nn.Sigmoid,
-                            dropout_layers=[-1],
-                            dropout_rate=0.2,
+                            dropout_layers=None,
+                            dropout_rate=None,
                             dtype = torch.float32).cuda()
          mlp_opt = torch.optim.Adam(sigma_mlp.parameters(), lr=1e-2, eps=1e-15)
          mlp_scheduler = CosineAnnealingLR(mlp_opt,
@@ -193,7 +193,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if args.method == "variance":
             render_pkg = render_active(viewpoint_cam, gaussians, pipe, background)
         else:
-            render_pkg = modified_render(viewpoint_cam, gaussians, pipe, background)
+            # TODO: need to modify render to get depth
+            render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
@@ -207,7 +208,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             error = ((image - gt_image) ** 2 / 2).div(variance) + torch.log(variance) / 2
             loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         elif args.method == "vcam":
-            if render_pkg["depth"].mean() < 0.5:
+            h,w = image.shape[-2], image.shape[-1]
+            if (render_pkg["depth"].numel()> 0.5*h*w) :
                 loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             else:
                 diff, nv_mask = render_vcam_difference(render_pkg, viewpoint_cam, gaussians, pipe, background,
