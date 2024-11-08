@@ -119,7 +119,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             print(f"[WARNING] checkpoint {checkpoint} doesn't exist, training from scratch")
 
     if first_iter == 0: # maybe init_ckpt has been save if preempted
-        save_checkpoint(gaussians, first_iter, scene, base_iter, save_path=init_ckpt_path, save_last=False)
+        save_checkpoint(gaussians, first_iter, scene, base_iter, save_path=init_ckpt_path, save_last=False,sigma_mlp=sigma_mlp)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -163,7 +163,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print(e)
                 print("selector exited early")
                 # NOTE: we use iteration - 1 because the selector is not done
-                save_checkpoint(gaussians, iteration - 1, scene)
+                save_checkpoint(gaussians, iteration - 1, scene,sigma_mlp=sigma_mlp)
                 csm.requeue()
 
             print(f"ITER {iteration}: selected views: {selected_views}")
@@ -209,7 +209,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         elif args.method == "vcam":
             h,w = image.shape[-2], image.shape[-1]
-            if (render_pkg["depth"].numel()> 0.5*h*w) :
+            if (render_pkg["depth"].numel()< 0.5*h*w) :
                 loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             else:
                 diff, nv_mask = render_vcam_difference(render_pkg, viewpoint_cam, gaussians, pipe, background,
@@ -231,7 +231,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # We save before logging
         if csm.should_exit():
-            save_checkpoint(gaussians, iteration - 1, scene)
+            save_checkpoint(gaussians, iteration - 1, scene, sigma_mlp=sigma_mlp)
             csm.requeue()
 
         with torch.no_grad():
@@ -280,7 +280,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         
         if (iteration in checkpoint_iterations):
-            save_checkpoint(gaussians, iteration, scene)
+            save_checkpoint(gaussians, iteration, scene, sigma_mlp=sigma_mlp)
     wandb.finish()
 
         

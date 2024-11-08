@@ -13,6 +13,7 @@ import torch
 import math
 from modified_diff_gaussian_rasterization import GaussianRasterizer as ModifiedGaussianRasterizer
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from diff_gaussian_rasterization_w_depth import GaussianRasterizer as RGBDGaussianRasterizer
 try:
     from var_diff_gaussian_rasterization import rasterize_variance
     from var_diff_gaussian_rasterization import GaussianRasterizer as ActiveGaussianRasterizer
@@ -55,7 +56,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         debug=pipe.debug
     )
 
-    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+    rasterizer = RGBDGaussianRasterizer(raster_settings=raster_settings)
 
     means3D = pc.get_xyz
     means2D = screenspace_points
@@ -89,7 +90,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    rendered_image, radii, depth = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -104,7 +105,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
-            "radii": radii}
+            "radii": radii,
+            "depth": depth}
 
 def render_active(viewpoint_camera, pc : GaussianModel_w_var, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """

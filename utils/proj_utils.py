@@ -172,7 +172,7 @@ def extract_scene_center_and_C2W(depth, view):
     inv_K = torch.inverse(K).unsqueeze(0)
     backproj_func = Backprojection(height=view.image_height, width=view.image_width)
     depth_v = depth.clone().detach()
-    depth_v = depth_v.unsqueeze(0).unsqueeze(0)
+    depth_v = depth_v.unsqueeze(0).unsqueeze(0) # (1,1,h,w)
     # mask = (depth_v < depth_v.max()).squeeze(0)
     mask = (depth_v > 0.).squeeze(0)
     point3d_camera = backproj_func(depth_v.cpu(), inv_K.cpu(), img_like_out=True).squeeze(0)

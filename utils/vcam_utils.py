@@ -8,7 +8,7 @@ from torch import nn
 import torch
 
 def render_vcam_difference(render_pkg, view, gaussians, pipeline, background, n_vcam=6,r_scale=0.1,method='vcam'):
-    depth = render_pkg['depth']
+    depth = render_pkg['depth'].squeeze()
     pred_img = render_pkg['render']
     look_at, rd_c2w = extract_scene_center_and_C2W(depth, view)
     D_median = depth.clone().flatten().median(0).values
@@ -34,7 +34,7 @@ def render_vcam_difference(render_pkg, view, gaussians, pipeline, background, n_
     rd2virs = []
     for vir_view in Vcams:
         vir_render_pkg = modified_render(vir_view, gaussians, pipeline, background)
-        vir_depth = vir_render_pkg['depth']
+        vir_depth = vir_render_pkg['depth'].squeeze()
         vir_pred_img = vir_render_pkg['render']
         vir_w2c = vir_view.world_view_transform.transpose(0, 1)
         rd2vir = vir_w2c @ rd_c2w

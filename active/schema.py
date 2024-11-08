@@ -155,9 +155,12 @@ schema_dict: Dict[str, BaseSchema] = {'all': All, "debug": V20Seq1Debug,
                                       "v20seq4_inplace": V20Seq4Inplace, "vk": VK,
                                       }
 
-override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2)), "africa": list(range(6, 14, 2)),
-                                            "statue": list(range(68, 76, 2)), "torch": list(range(9, 17, 2))}
+override_test_idxs_dict: Dict[str, List[int]] = {}
+override_train_idxs_dict: Dict[str, List[int]] = {"blender": [0,4,22,35,36,43,57,60,63,76,1,2,51,48,80,99,25,44,54,49]}
 
-override_train_idxs_dict: Dict[str, List[int]] = {"basket": list(range(43, 50,2)), "africa": list(range(5, 14, 2)),
-                                            "statue": list(range(67, 76, 2)), "torch": list(range(8, 17, 2)),
-                                                  "blender": [0,4,22,35,36,43,57,60,63,76,1,2,51,48,80,99,25,44,54,49]}
+# override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2)), "africa": list(range(6, 14, 2)),
+#                                             "statue": list(range(68, 76, 2)), "torch": list(range(9, 17, 2))}
+#
+# override_train_idxs_dict: Dict[str, List[int]] = {"basket": list(range(43, 50,2)), "africa": list(range(5, 14, 2)),
+#                                             "statue": list(range(67, 76, 2)), "torch": list(range(8, 17, 2)),
+#                                                   "blender": [0,4,22,35,36,43,57,60,63,76,1,2,51,48,80,99,25,44,54,49]}
