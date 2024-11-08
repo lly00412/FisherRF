@@ -203,11 +203,11 @@ class VirtualCam(nn.Module):
         for new_o in new_centers:
             # create new camera pose by look at
             forward = look_at - new_o
-            forward /= torch.linalg.norm(forward)
+            forward = forward / torch.linalg.norm(forward)
             forward = forward.to(new_o)
             world_up = torch.tensor([0, 1, 0]).to(new_o)  # need to be careful for the openGL system!!!
             right = torch.cross(world_up, forward)
-            right /= torch.linalg.norm(right)
+            right = right / torch.linalg.norm(right)
             up = torch.cross(forward, right)
 
             new_c2w = torch.eye(4).to(new_o)

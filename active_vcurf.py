@@ -22,12 +22,17 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 from utils.cluster_manager import ClusterStateManager
-
+from utils.vcam_utils import *
+import torch.nn as nn
+from torch.optim.lr_scheduler import CosineAnnealingLR
 csm = ClusterStateManager()
 
+
 @torch.no_grad()
-def save_checkpoint(gaussians, iteration, scene, base_iter=0, save_path=None, save_last=True):
+def save_checkpoint(gaussians, iteration, scene, base_iter=0, save_path=None, save_last=True, sigma_mlp = None):
     ckpt_dict = {"model_params": gaussians.capture(), "first_iter": iteration, "train_idx": scene.train_idxs, "base_iter": base_iter}
+    if sigma_mlp is not None:
+        ckpt_dict["sigma_mlp"] = sigma_mlp.state_dict()
 
     if save_last:
         last_path = scene.model_path + "/last.pth"
@@ -39,10 +44,14 @@ def save_checkpoint(gaussians, iteration, scene, base_iter=0, save_path=None, sa
     print("\n[ITER {}] Saving Checkpoint to {}".format(iteration, save_path))
     torch.save(ckpt_dict, save_path)   
 
-def load_checkpoint(ckpt_path: str, gaussians, scene, opt, ignore_train_idxs=False):
+def load_checkpoint(ckpt_path: str, gaussians, scene, opt, ignore_train_idxs=False, sigma_mlp=None):
     ckpt_dict = torch.load(ckpt_path)
     (model_params, first_iter, train_idxs) = ckpt_dict["model_params"], ckpt_dict["first_iter"], ckpt_dict["train_idx"]
     gaussians.restore(model_params, opt)
+
+    if ("sigma_mlp" in ckpt_dict) and (sigma_mlp is not None):
+        sigma_mlp.load_state_dict(ckpt_dict["sigma_mlp"])
+
     if not ignore_train_idxs:
         scene.train_idxs = train_idxs
 
@@ -60,6 +69,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
+
+    if args.method == 'vcam':
+         sigma_mlp = create_mlp(in_dim= 4*args.n_vcam,
+                            num_layers = 3,
+                            layer_width =64,
+                            out_dim= 1,
+                            skip_connections=None,
+                            activation=nn.ReLU,
+                            out_activation=nn.Sigmoid,
+                            dropout_layers=[-1],
+                            dropout_rate=0.2,
+                            dtype = torch.float32).cuda()
+         mlp_opt = torch.optim.Adam(sigma_mlp.parameters(), lr=1e-2, eps=1e-15)
+         mlp_scheduler = CosineAnnealingLR(mlp_opt,
+                                     T_max=args.iterations,
+                                     eta_min = 1e-4)
+         mlp_opt.zero_grad()
+
     
     # Active View Selection
     if hasattr(args,"train_idxs"):
@@ -166,7 +193,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if args.method == "variance":
             render_pkg = render_active(viewpoint_cam, gaussians, pipe, background)
         else:
-            render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+            render_pkg = modified_render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
@@ -179,10 +206,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # NLL + SSIM Loss
             error = ((image - gt_image) ** 2 / 2).div(variance) + torch.log(variance) / 2
             loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        elif args.method == "vcam":
+            if render_pkg["depth"].mean() < 0.5:
+                loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            else:
+                diff, nv_mask = render_vcam_difference(render_pkg, viewpoint_cam, gaussians, pipe, background,
+                                              n_vcam=args.n_vcam,r_scale=args.r_scale,method='vcam') # (n_vcam, 4, h, w)
+                diff = diff.view(args.n_vcam*4,diff.shape[-1], diff.shape[-2]).permute(1,2,0)
+                # diff = torch.rand(args.n_vcam*4, image.shape[-1], image.shape[-2],requires_grad=True).permute(1,2,0).cuda()
+                sigmas = sigma_mlp(diff) # (h,w,3)
+                sigmas = sigmas.squeeze() #(h, w)
+                # NLL + SSIM Loss
+                error = (image - gt_image) ** 2 / 2*torch.exp(sigmas) + sigmas / 2
+                loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         else:
             # L1 + SSIM
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
+        torch.autograd.set_detect_anomaly(True)
         loss.backward()
         iter_end.record()
 
@@ -228,6 +269,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
+
+            if args.method == 'vcam':
+                if iteration >= 2000:
+                    mlp_opt.step()
+                    mlp_scheduler.step()
+                    mlp_opt.zero_grad()
+
         
         if (iteration in checkpoint_iterations):
             save_checkpoint(gaussians, iteration, scene)
@@ -359,7 +407,8 @@ if __name__ == "__main__":
     parser.add_argument("--train_idxs", default=None, type=str, help="speical train idxs on fewshot training")
     parser.add_argument("--n_inits", default=10, type=int, help="num of view for initialization")
     parser.add_argument("--n_emsemble", default=None, type=int, help="num of view for emsembling training")
-
+    parser.add_argument("--n_vcam", default=6, type=int, help="num of virtual camera")
+    parser.add_argument("--r_scale", default=0.1, type=float, help="sample range depth ratio")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     if args.log_every_image:

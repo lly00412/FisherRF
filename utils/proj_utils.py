@@ -11,7 +11,7 @@ from utils.graphics_utils import getIntrinsicMatrix,getView2World
 class Projection(nn.Module):
     """Layer which projects 3D points into a camera view
     """
-    def __init__(self, height, width, eps=1e-7):
+    def __init__(self, height, width, eps=1e-6):
         super(Projection, self).__init__()
 
         self.height = height
@@ -39,8 +39,8 @@ class Projection(nn.Module):
 
         # normalization
         if normalized:
-            xy[..., 0] /= self.width - 1
-            xy[..., 1] /= self.height - 1
+            xy[..., 0] = xy[..., 0] / (self.width - 1)
+            xy[..., 1] = xy[..., 1] / (self.height - 1)
             xy = (xy - 0.5) * 2
         return xy
 
@@ -171,7 +171,7 @@ def extract_scene_center_and_C2W(depth, view):
         depth)
     inv_K = torch.inverse(K).unsqueeze(0)
     backproj_func = Backprojection(height=view.image_height, width=view.image_width)
-    depth_v = depth.clone()
+    depth_v = depth.clone().detach()
     depth_v = depth_v.unsqueeze(0).unsqueeze(0)
     # mask = (depth_v < depth_v.max()).squeeze(0)
     mask = (depth_v > 0.).squeeze(0)
@@ -183,6 +183,6 @@ def extract_scene_center_and_C2W(depth, view):
     expanded_mask = mask.expand_as(point3d_world)
     selected = point3d_world.to(mask.device)[expanded_mask]
     selected = selected.view(4, -1)
-    look_at = selected.median(1).values[:3]
-    # look_at = selected.mean(1)[:3]
+    # look_at = selected.median(1).values[:3]
+    look_at = selected.mean(1)[:3]
     return look_at,C2W

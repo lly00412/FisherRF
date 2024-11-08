@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 DATASET_PATH=/mnt/Data2/nerf_datasets/m360/
 EXP_PATH=./output/m360
 
