@@ -54,18 +54,28 @@ def capture(self):
     )
 
 @torch.no_grad()
-def render_uncertainty(view, gaussians, pipeline, background):
+def render_uncertainty(view, gaussians, sigma_mlp, pipeline, background, args):
     ###########################
     #  rendering RGB, depth & error
     ###########################
     rests = {}
     render_pkg = render(view, gaussians, pipeline, background)
+
+    diff, nv_mask = render_vcam_difference(render_pkg, view, gaussians, pipeline, background,
+                                           n_vcam=args.n_vcam, r_scale=args.r_scale, method='vcam')
+    diff = diff.view(args.n_vcam * 4, diff.shape[-1], diff.shape[-2]).permute(1, 2, 0)
+
+    input = torch.cat([render_pkg["depth"].permute(1, 2, 0), render_pkg['render'].permute(1, 2, 0), diff], dim=-1)
+    sigmas = sigma_mlp(input)  # (h,w,3)
+    sigmas = sigmas.squeeze()   #
+
+
     pred_img = render_pkg["render"]
     # pred_img.backward(gradient=torch.ones_like(pred_img))
     gt_img = view.original_image[0:3, :, :]
     rgb_err = torch.mean((pred_img - gt_img)**2,0)
     rests['rgb_err'] = rgb_err
-    uncertainty = render_pkg["variance"]  # (h , w)
+    uncertainty = torch.exp(sigmas)  # (h , w)
 
     return pred_img, uncertainty, rests
 
@@ -80,13 +90,29 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     makedirs(error_path, exist_ok=True)
     makedirs(roc_path, exist_ok=True)
 
+    sigma_mlp = create_mlp(in_dim=4 * args.n_vcam + 4,
+                           num_layers=3,
+                           layer_width=128,
+                           out_dim=1,
+                           skip_connections=None,
+                           activation=nn.ReLU,
+                           out_activation=nn.Softplus,
+                           dropout_layers=None,
+                           dropout_rate=None,
+                           dtype=torch.float32).cuda()
+
+    ckpt_dict = torch.load(os.path.join(model_path, "model_20000.pth"))
+    sigma_mlp.load_state_dict(ckpt_dict)
+    sigma_mlp.eval()
+
     ROCs = {}
     AUCs = {}
     AUSEs = {}
     with torch.no_grad():
         for idx, view in enumerate(tqdm(test_views, desc="Rendering on test set")):
 
-            pred_img, uncertainty, rests = render_uncertainty(view, gaussians, pipeline, background)
+            pred_img, uncertainty, rests = render_uncertainty(view, gaussians, sigma_mlp, pipeline, background, args)
+
 
             ################################
             #  save all outputs
@@ -118,7 +144,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
 
             # save uncertainty
             sns.heatmap(torch.log(uncertainty).detach().cpu(), square=True)
-            plt.savefig(os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg"))
+            plt.savefig(os.path.join(eval_path, f"vcurf_{view.image_name}.jpg"))
             plt.close()
 
             # sns.heatmap(torch.log(uncertanity_map_D / pixel_gaussian_counter).detach().cpu(), square=True)
@@ -139,7 +165,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             ################################
             opt_label = 'rgb_err'
             values = {
-                'activenerf':uncertainty.flatten(),
+                'activecurf':uncertainty.flatten(),
             }
 
             for k in rests.keys():
@@ -274,8 +300,8 @@ if __name__ == "__main__":
     parser.add_argument("--depth_only", action="store_true", help="render depth only")
     parser.add_argument("--current", action="store_true", help="render uncertainty from current view")
     parser.add_argument("--render_vcam", action="store_true", help="render uncertainty from virtual cameras")
-    parser.add_argument("--n_vcam", nargs="+", default=[2,4,6,8], type=int, help="num of virtual cameras")
-    parser.add_argument("--r_scale", nargs="+", default=[0.05, 0.1, 0.25, 0.5], type=float, help="radiaus scale of the sampling space")
+    parser.add_argument("--n_vcam", default=[2,4,6,8], type=int, help="num of virtual cameras")
+    parser.add_argument("--r_scale", default=0.1, type=float, help="radiaus scale of the sampling space")
     # parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)

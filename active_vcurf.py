@@ -73,11 +73,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if args.method == 'vcam':
          sigma_mlp = create_mlp(in_dim= 4*args.n_vcam,
                             num_layers = 3,
-                            layer_width =64,
+                            layer_width =128,
                             out_dim= 1,
                             skip_connections=None,
                             activation=nn.ReLU,
-                            out_activation=nn.Sigmoid,
+                            out_activation=nn.Softplus,
                             dropout_layers=None,
                             dropout_rate=None,
                             dtype = torch.float32).cuda()
@@ -208,19 +208,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             error = ((image - gt_image) ** 2 / 2).div(variance) + torch.log(variance) / 2
             loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         elif args.method == "vcam":
-            h,w = image.shape[-2], image.shape[-1]
-            if (render_pkg["depth"].numel()< 0.5*h*w) :
+            cur_iter = iteration - base_iter
+            if cur_iter % opt.opacity_reset_interval <= 200 :
                 loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             else:
                 diff, nv_mask = render_vcam_difference(render_pkg, viewpoint_cam, gaussians, pipe, background,
                                               n_vcam=args.n_vcam,r_scale=args.r_scale,method='vcam') # (n_vcam, 4, h, w)
                 diff = diff.view(args.n_vcam*4,diff.shape[-1], diff.shape[-2]).permute(1,2,0)
                 # diff = torch.rand(args.n_vcam*4, image.shape[-1], image.shape[-2],requires_grad=True).permute(1,2,0).cuda()
-                sigmas = sigma_mlp(diff) # (h,w,3)
-                sigmas = sigmas.squeeze() #(h, w)
+                #input = torch.cat([render_pkg["depth"].permute(1,2,0),render_pkg['render'].permute(1,2,0),diff], dim=-1)
+                # sigmas = sigma_mlp(input) # (h,w)
+                sigmas = sigma_mlp(diff)
+                sigmas = sigmas.squeeze() + 1e-6#(h, w)
                 # NLL + SSIM Loss
-                error = (image - gt_image) ** 2 / 2*torch.exp(sigmas) + sigmas / 2
+                error = (image - gt_image) ** 2 / (2*sigmas) + torch.log(sigmas) / 2
                 loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+                if (iteration in checkpoint_iterations):
+                    mlp_path = scene.model_path + f"/model_{iteration}.pth"
+                    torch.save(sigma_mlp.state_dict(), mlp_path)
+
         else:
             # L1 + SSIM
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
@@ -273,7 +279,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
             if args.method == 'vcam':
-                if iteration >= 2000:
+                cur_iter = iteration - base_iter
+                if cur_iter % opt.opacity_reset_interval > 200:
                     mlp_opt.step()
                     mlp_scheduler.step()
                     mlp_opt.zero_grad()
