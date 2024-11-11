@@ -25,14 +25,17 @@ from utils.cluster_manager import ClusterStateManager
 from utils.vcam_utils import *
 import torch.nn as nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
+import tinycudann as tcnn
 csm = ClusterStateManager()
 
 
 @torch.no_grad()
-def save_checkpoint(gaussians, iteration, scene, base_iter=0, save_path=None, save_last=True, sigma_mlp = None):
+def save_checkpoint(gaussians, iteration, scene, base_iter=0, save_path=None, save_last=True, sigma_mlp_dict = None):
     ckpt_dict = {"model_params": gaussians.capture(), "first_iter": iteration, "train_idx": scene.train_idxs, "base_iter": base_iter}
-    if sigma_mlp is not None:
-        ckpt_dict["sigma_mlp"] = sigma_mlp.state_dict()
+    if sigma_mlp_dict is not None:
+        ckpt_dict["sigma_mlp"] = sigma_mlp_dict['network'].state_dict()
+        ckpt_dict['mlp_opt'] = sigma_mlp_dict['optimizer'].state_dict()
+        ckpt_dict['mlp_scheduler'] = sigma_mlp_dict['scheduler'].state_dict()
 
     if save_last:
         last_path = scene.model_path + "/last.pth"
@@ -44,13 +47,17 @@ def save_checkpoint(gaussians, iteration, scene, base_iter=0, save_path=None, sa
     print("\n[ITER {}] Saving Checkpoint to {}".format(iteration, save_path))
     torch.save(ckpt_dict, save_path)   
 
-def load_checkpoint(ckpt_path: str, gaussians, scene, opt, ignore_train_idxs=False, sigma_mlp=None):
+def load_checkpoint(ckpt_path: str, gaussians, scene, opt, ignore_train_idxs=False, sigma_mlp_dict=None):
     ckpt_dict = torch.load(ckpt_path)
     (model_params, first_iter, train_idxs) = ckpt_dict["model_params"], ckpt_dict["first_iter"], ckpt_dict["train_idx"]
     gaussians.restore(model_params, opt)
 
-    if ("sigma_mlp" in ckpt_dict) and (sigma_mlp is not None):
-        sigma_mlp.load_state_dict(ckpt_dict["sigma_mlp"])
+    if ("sigma_mlp" in ckpt_dict) and (sigma_mlp_dict is not None):
+        sigma_mlp_dict['network'].load_state_dict(ckpt_dict["sigma_mlp"])
+        sigma_mlp_dict['optimizer'].load_state_dict(ckpt_dict["mlp_opt"])
+        sigma_mlp_dict['scheduler'].load_state_dict(ckpt_dict["mlp_scheduler"])
+
+
 
     if not ignore_train_idxs:
         scene.train_idxs = train_idxs
@@ -71,21 +78,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians.training_setup(opt)
 
     if args.method == 'vcam':
-         sigma_mlp = create_mlp(in_dim= 4*args.n_vcam,
+         sigma_mlp_dict = {}
+         sigma_mlp_dict['network'] = create_mlp(in_dim= 4*args.n_vcam,
                             num_layers = 3,
                             layer_width =128,
                             out_dim= 1,
                             skip_connections=None,
                             activation=nn.ReLU,
-                            out_activation=nn.Softplus,
-                            dropout_layers=None,
-                            dropout_rate=None,
+                            out_activation=None,
+                            dropout_layers=[-1],
+                            dropout_rate=0.2,
                             dtype = torch.float32).cuda()
-         mlp_opt = torch.optim.Adam(sigma_mlp.parameters(), lr=1e-2, eps=1e-15)
-         mlp_scheduler = CosineAnnealingLR(mlp_opt,
+         # sigma_mlp_dict['network'] = tcnn.Network(
+         #                n_input_dims=4*args.n_vcam+4, n_output_dims=1,
+         #                network_config={
+         #                    "otype": "FullyFusedMLP",
+         #                    "activation": "ReLU",
+         #                    "output_activation": "Softplus",
+         #                    "n_neurons": 128,
+         #                    "n_hidden_layers": 3,
+         #                }
+         #            ).cuda()
+
+         sigma_mlp_dict['optimizer'] = torch.optim.Adam(sigma_mlp_dict['network'].parameters(), lr=1e-2, eps=1e-15)
+         sigma_mlp_dict['scheduler'] = CosineAnnealingLR(sigma_mlp_dict['optimizer'],
                                      T_max=args.iterations,
                                      eta_min = 1e-4)
-         mlp_opt.zero_grad()
+         sigma_mlp_dict['optimizer'].zero_grad()
+
 
     
     # Active View Selection
@@ -119,7 +139,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             print(f"[WARNING] checkpoint {checkpoint} doesn't exist, training from scratch")
 
     if first_iter == 0: # maybe init_ckpt has been save if preempted
-        save_checkpoint(gaussians, first_iter, scene, base_iter, save_path=init_ckpt_path, save_last=False,sigma_mlp=sigma_mlp)
+        save_checkpoint(gaussians, first_iter, scene, base_iter, save_path=init_ckpt_path, save_last=False,sigma_mlp_dict=sigma_mlp_dict)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -163,7 +183,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print(e)
                 print("selector exited early")
                 # NOTE: we use iteration - 1 because the selector is not done
-                save_checkpoint(gaussians, iteration - 1, scene,sigma_mlp=sigma_mlp)
+                save_checkpoint(gaussians, iteration - 1, scene,sigma_mlp_dict=sigma_mlp_dict)
                 csm.requeue()
 
             print(f"ITER {iteration}: selected views: {selected_views}")
@@ -214,18 +234,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             else:
                 diff, nv_mask = render_vcam_difference(render_pkg, viewpoint_cam, gaussians, pipe, background,
                                               n_vcam=args.n_vcam,r_scale=args.r_scale,method='vcam') # (n_vcam, 4, h, w)
-                diff = diff.view(args.n_vcam*4,diff.shape[-1], diff.shape[-2]).permute(1,2,0)
-                # diff = torch.rand(args.n_vcam*4, image.shape[-1], image.shape[-2],requires_grad=True).permute(1,2,0).cuda()
-                #input = torch.cat([render_pkg["depth"].permute(1,2,0),render_pkg['render'].permute(1,2,0),diff], dim=-1)
-                # sigmas = sigma_mlp(input) # (h,w)
-                sigmas = sigma_mlp(diff)
-                sigmas = sigmas.squeeze() + 1e-6#(h, w)
+                _, h, w = image.shape
+                diff = diff.view(args.n_vcam*4,h, w).permute(1,2,0)
+                # input = torch.cat([image.permute(1,2,0),diff], dim=-1)
+                # input = input.view(-1,args.n_vcam*4+4)
+                # sigmas = sigma_mlp_dict['network'](input) # (h,w)
+                sigmas = sigma_mlp_dict['network'](diff)  # (h,w)
+
+                # sigmas = sigmas.view(h,w) + 1e-6
+                sigmas = sigmas.squeeze() #(h, w)
+                sigmas = torch.where(sigmas < .01, .01, sigmas)
                 # NLL + SSIM Loss
                 error = (image - gt_image) ** 2 / (2*sigmas) + torch.log(sigmas) / 2
                 loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
                 if (iteration in checkpoint_iterations):
                     mlp_path = scene.model_path + f"/model_{iteration}.pth"
-                    torch.save(sigma_mlp.state_dict(), mlp_path)
+                    torch.save(sigma_mlp_dict['network'].state_dict(), mlp_path)
 
         else:
             # L1 + SSIM
@@ -237,7 +261,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # We save before logging
         if csm.should_exit():
-            save_checkpoint(gaussians, iteration - 1, scene, sigma_mlp=sigma_mlp)
+            save_checkpoint(gaussians, iteration - 1, scene, sigma_mlp_dict=sigma_mlp_dict)
             csm.requeue()
 
         with torch.no_grad():
@@ -281,13 +305,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if args.method == 'vcam':
                 cur_iter = iteration - base_iter
                 if cur_iter % opt.opacity_reset_interval > 200:
-                    mlp_opt.step()
-                    mlp_scheduler.step()
-                    mlp_opt.zero_grad()
+                    sigma_mlp_dict['optimizer'].step()
+                    sigma_mlp_dict['scheduler'].step()
+                    sigma_mlp_dict['optimizer'].zero_grad()
 
         
         if (iteration in checkpoint_iterations):
-            save_checkpoint(gaussians, iteration, scene, sigma_mlp=sigma_mlp)
+            save_checkpoint(gaussians, iteration, scene, sigma_mlp_dict=sigma_mlp_dict)
     wandb.finish()
 
         

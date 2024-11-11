@@ -65,8 +65,10 @@ def render_uncertainty(view, gaussians, sigma_mlp, pipeline, background, args):
                                            n_vcam=args.n_vcam, r_scale=args.r_scale, method='vcam')
     diff = diff.view(args.n_vcam * 4, diff.shape[-1], diff.shape[-2]).permute(1, 2, 0)
 
-    input = torch.cat([render_pkg["depth"].permute(1, 2, 0), render_pkg['render'].permute(1, 2, 0), diff], dim=-1)
-    sigmas = sigma_mlp(input)  # (h,w,3)
+    # input = torch.cat([render_pkg["depth"].permute(1, 2, 0), render_pkg['render'].permute(1, 2, 0), diff], dim=-1)
+    # sigmas = sigma_mlp(input)  # (h,w,3)
+    sigmas = sigma_mlp(diff)
+
     sigmas = sigmas.squeeze()   #
 
 
@@ -75,7 +77,7 @@ def render_uncertainty(view, gaussians, sigma_mlp, pipeline, background, args):
     gt_img = view.original_image[0:3, :, :]
     rgb_err = torch.mean((pred_img - gt_img)**2,0)
     rests['rgb_err'] = rgb_err
-    uncertainty = torch.exp(sigmas)  # (h , w)
+    uncertainty = sigmas  # (h , w)
 
     return pred_img, uncertainty, rests
 
@@ -90,16 +92,16 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     makedirs(error_path, exist_ok=True)
     makedirs(roc_path, exist_ok=True)
 
-    sigma_mlp = create_mlp(in_dim=4 * args.n_vcam + 4,
-                           num_layers=3,
-                           layer_width=128,
-                           out_dim=1,
-                           skip_connections=None,
-                           activation=nn.ReLU,
-                           out_activation=nn.Softplus,
-                           dropout_layers=None,
-                           dropout_rate=None,
-                           dtype=torch.float32).cuda()
+    sigma_mlp = create_mlp(in_dim= 4*args.n_vcam,
+                            num_layers = 3,
+                            layer_width =128,
+                            out_dim= 1,
+                            skip_connections=None,
+                            activation=nn.ReLU,
+                            out_activation=None,
+                            dropout_layers=[-1],
+                            dropout_rate=0.2,
+                            dtype = torch.float32).cuda()
 
     ckpt_dict = torch.load(os.path.join(model_path, "model_20000.pth"))
     sigma_mlp.load_state_dict(ckpt_dict)
