@@ -1,16 +1,14 @@
 export CUDA_VISIBLE_DEVICES=1
 
-DATASET_PATH=/mnt/Data2/nerf_datasets/tandt_db/tandt/
-EXP_PATH=./output/tandt/
-
 emsemble_seeds=(0 500 1000 2000 600)
-scenes=(train truck)
 
-#DATASET_PATH=/mnt/Data2/nerf_datasets/tandt_db/db/
+#DATASET_PATH=/mnt/Data2/nerf_datasets/tandt_db/tandt/
 #EXP_PATH=./output/tandt/
+#scenes=(train truck)
 
-#emsemble_seeds=(0 500 1000 2000 600)
-#scenes=(drjohnson playroom)
+DATASET_PATH=/mnt/Data2/nerf_datasets/tandt_db/db/
+EXP_PATH=./output/tandt/
+scenes=(drjohnson playroom)
 
 
 

@@ -48,9 +48,9 @@ def render_vcam_difference(render_pkg, view, gaussians, pipeline, background, n_
                                                         depth_tgt=rd_depths,
                                                         tgt2src_transform=rd2virs)
     # nv_mask ()
-    vir2rd_depths[nv_mask.bool()] = 0.1
+    vir2rd_depths[nv_mask.bool()] = 0.
     nv_mask = nv_mask.repeat(1,3,1,1)
-    vir2rd_pred_imgs[nv_mask.bool()] = 0.1
+    vir2rd_pred_imgs[nv_mask.bool()] = 0.
     depth_l2 = (vir2rd_depths - rd_depths) **2
     rgb_l2 = (vir2rd_pred_imgs - rd_pred_imgs) **2
     diff = torch.cat([depth_l2,rgb_l2],dim=1)

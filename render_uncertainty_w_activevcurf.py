@@ -145,7 +145,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             #             plt.close()
 
             # save uncertainty
-            sns.heatmap(torch.log(uncertainty).detach().cpu(), square=True)
+            sns.heatmap(uncertainty.detach().cpu(), square=True)
             plt.savefig(os.path.join(eval_path, f"vcurf_{view.image_name}.jpg"))
             plt.close()
 
