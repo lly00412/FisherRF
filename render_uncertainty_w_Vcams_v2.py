@@ -125,7 +125,6 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
                 # torchvision.utils.save_image(pred_img.detach(),"./output/m360/debug/rgb_pred.jpg")
                 # torchvision.utils.save_image(vir_pred_imgs[0].detach(), "./output/m360/debug/vir_rgb_pred_0.jpg")
                 # torchvision.utils.save_image(vir2rd_pred_imgs[0].detach(), "./output/m360/debug/vir2rd_rgb_pred_0.jpg")
-                breakpoint()
                 ################################
                 #  compute uncertainty by l2 diff
                 ################################
