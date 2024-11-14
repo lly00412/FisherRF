@@ -79,10 +79,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if args.method == 'vcam':
          sigma_mlp_dict = {}
          sigma_mlp_dict['network'] = create_mlp(in_dim= 4*args.n_vcam,
-                            num_layers = 3,
+                            num_layers = 5,
                             layer_width =128,
                             out_dim= 1,
-                            skip_connections=None,
+                            skip_connections=[2,4],
                             activation=nn.ReLU,
                             out_activation=None,
                             dropout_layers=[-1],

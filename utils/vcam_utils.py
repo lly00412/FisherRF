@@ -48,9 +48,13 @@ def render_vcam_difference(render_pkg, view, gaussians, pipeline, background, n_
                                                         depth_tgt=rd_depths,
                                                         tgt2src_transform=rd2virs)
     # nv_mask ()
-    vir2rd_depths[nv_mask.bool()] = 0.
+    max_depth = 15.
+    max_rgb = 1.
+    vir2rd_depths[nv_mask.bool()] = max_depth
+    vir2rd_depths = vir2rd_depths/max_depth
+    rd_depths = rd_depths/max_depth
     nv_mask = nv_mask.repeat(1,3,1,1)
-    vir2rd_pred_imgs[nv_mask.bool()] = 0.
+    vir2rd_pred_imgs[nv_mask.bool()] = max_rgb
     depth_l2 = (vir2rd_depths - rd_depths) **2
     rgb_l2 = (vir2rd_pred_imgs - rd_pred_imgs) **2
     diff = torch.cat([depth_l2,rgb_l2],dim=1)
@@ -135,7 +139,7 @@ def create_mlp(
                 assert i not in skip_connections, "No skip connection for layer 0"
                 layers.append(nn.Linear(in_dim, layer_width, dtype=dtype))
             elif i in skip_connections:
-                layers.append(nn.Linear(in_dim + layer_width, layer_width, dtype=dtype))
+                layers.append(SkipConnection(layer_width, layer_width, dtype=dtype))
             else:
                 layers.append(nn.Linear(layer_width, layer_width, dtype=dtype))
             if activation:
@@ -147,3 +151,13 @@ def create_mlp(
         if out_activation:
             layers.append(out_activation())
     return nn.Sequential(*layers)
+
+class SkipConnection(nn.Module):
+    def __init__(self, input_dim, output_dim, dtype):
+        super().__init__()
+        self.linear = nn.Linear(input_dim, output_dim,dtype=dtype)
+
+    def forward(self, x):
+        if self.linear:
+            skip = self.linear(x)
+        return x + skip

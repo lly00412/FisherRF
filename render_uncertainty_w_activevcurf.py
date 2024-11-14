@@ -124,6 +124,24 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             # save outputs
             torchvision.utils.save_image(pred_img.detach(), os.path.join(render_path, f"{view.image_name}.png"))
 
+            err = rests['rgb_err'].detach().cpu()
+            q_90 = torch.quantile(uncertainty[err > 0.], 90 / 100.0)
+            pred_img1 = pred_img.detach().clone()
+            pred_img1[..., uncertainty > q_90] = 0.
+            torchvision.utils.save_image(pred_img1.detach(), os.path.join(render_path, f"{view.image_name}_q90.png"))
+
+            q_70 = torch.quantile(uncertainty[err > 0.], 70 / 100.0)
+            pred_img2 = pred_img.detach().clone()
+            pred_img2[..., uncertainty > q_70] = 0.
+            torchvision.utils.save_image(pred_img2.detach(), os.path.join(render_path, f"{view.image_name}_q70.png"))
+
+            q_50 = torch.quantile(uncertainty[err > 0.], 50 / 100.0)
+            pred_img3 = pred_img.detach().clone()
+            pred_img3[..., uncertainty > q_50] = 0.
+            torchvision.utils.save_image(pred_img3.detach(), os.path.join(render_path, f"{view.image_name}_q50.png"))
+
+
+            breakpoint()
 
             # # save depth
             # plt.figure(facecolor='white')
@@ -281,8 +299,8 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         override_test_idxs = None
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False, override_train_idxs=override_train_idxs, override_test_idxs=override_test_idxs)
 
-    # bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-    bg_color = [1, 1, 1]
+    bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+    # bg_color = [1, 1, 1]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     if args.current:
