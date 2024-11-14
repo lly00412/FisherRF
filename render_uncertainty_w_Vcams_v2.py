@@ -269,47 +269,6 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
             plt.close()
 
-            breakpoint()
-            from utils.plot_utils import *
-            from mpl_toolkits.axes_grid1 import make_axes_locatable
-            fig, ax = plt.subplots(1)
-            vcam_path = os.path.join(args.model_path, "vcams")
-
-            rgb_std = colormap(rgb_std)
-            torchvision.utils.save_image(rgb_std.detach(), os.path.join(vcam_path,'turbo.jpg'))
-
-            rgb_std = rests['vcu(6 vcams, 0.1 med)']
-            plt.close()
-            percentail = torch.quantile(rgb_std[mask], 0.6)
-            rgb_std_clipped = torch.clip(rgb_std, max=percentail)
-
-            plt.figure(facecolor='white')
-            fig, ax = plt.subplots(1)
-            heatmap = sns.heatmap(rgb_std_clipped.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy(),cbar=False, cmap="viridis")
-            ax.axis('off')
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="8%", pad=0.3)
-            cbar = fig.colorbar(heatmap.collections[0], cax=cax, orientation='vertical')
-            cbar.set_ticks([data_min, data_max])
-            cbar.set_ticklabels(['min', 'max'])
-            plt.tight_layout(pad=0.1)
-            plt.savefig(os.path.join(vcam_path, 'vcurf_heatmap_0.jpg'))
-            # plt.savefig(os.path.join(vcam_path,'hist.jpg'))
-
-
-
-            unc_min = 0
-            unc_max = 3
-            rgb_std = torch.clip((rgb_std - np.minimum(unc_min, unc_max)) / np.abs(unc_max - unc_min), 0, 1)
-            im = ax.imshow(rgb_std.cpu().numpy(), cmap="jet")
-            ax.axis("off")
-            fname = os.path.join(vcam_path,'vcurf_uncert_0.jpg')
-            fig.savefig(fname, dpi=300, bbox_inches='tight', pad_inches=0)
-
-            sns.heatmap(rgb_std.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
-            # , cmap="viridis")
-
-            plt.savefig(os.path.join(vcam_path,'vcurf_heatmap_0.jpg'))
 
 
             if args.render_vcam:
@@ -458,8 +417,8 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         override_test_idxs = None
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False, override_train_idxs=override_train_idxs, override_test_idxs=override_test_idxs)
 
-    bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-    # bg_color = [1, 1, 1]
+    # bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+    bg_color = [1, 1, 1]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     if args.current:

@@ -11,6 +11,6 @@ for OBJ in ${scenes[@]}
 do
 
      python render_uncertainty_w_Vcams_v2.py -m ${EXP_PATH}/${OBJ}/v15/ \
-          --render_vcam --n_vcam 6 --seed=0 --r_scale 0.1 --test_idxs 67
+          --render_vcam --n_vcam 6 --seed=0 --r_scale 0.1 --test_idxs 125
 
 done

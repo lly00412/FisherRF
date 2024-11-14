@@ -107,6 +107,8 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     sigma_mlp.load_state_dict(ckpt_dict)
     sigma_mlp.eval()
 
+    test_views = [test_views[i] for i in args.test_idxs]
+
     ROCs = {}
     AUCs = {}
     AUSEs = {}
@@ -279,7 +281,8 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         override_test_idxs = None
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False, override_train_idxs=override_train_idxs, override_test_idxs=override_test_idxs)
 
-    bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+    # bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+    bg_color = [1, 1, 1]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     if args.current:
@@ -304,6 +307,8 @@ if __name__ == "__main__":
     parser.add_argument("--render_vcam", action="store_true", help="render uncertainty from virtual cameras")
     parser.add_argument("--n_vcam", default=[2,4,6,8], type=int, help="num of virtual cameras")
     parser.add_argument("--r_scale", default=0.1, type=float, help="radiaus scale of the sampling space")
+    parser.add_argument("--test_idxs", nargs="+", default=[67], type=int,
+                        help="index of test images to evaluate")
     # parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)

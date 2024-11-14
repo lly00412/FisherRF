@@ -58,7 +58,6 @@ def load_checkpoint(ckpt_path: str, gaussians, scene, opt, ignore_train_idxs=Fal
         sigma_mlp_dict['scheduler'].load_state_dict(ckpt_dict["mlp_scheduler"])
 
 
-
     if not ignore_train_idxs:
         scene.train_idxs = train_idxs
 
@@ -229,24 +228,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         elif args.method == "vcam":
             cur_iter = iteration - base_iter
-            if cur_iter % opt.opacity_reset_interval <= 200 :
+            if (cur_iter % opt.opacity_reset_interval <= 200):
                 loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             else:
                 diff, nv_mask = render_vcam_difference(render_pkg, viewpoint_cam, gaussians, pipe, background,
                                               n_vcam=args.n_vcam,r_scale=args.r_scale,method='vcam') # (n_vcam, 4, h, w)
                 _, h, w = image.shape
                 diff = diff.view(args.n_vcam*4,h, w).permute(1,2,0)
-                # input = torch.cat([image.permute(1,2,0),diff], dim=-1)
-                # input = input.view(-1,args.n_vcam*4+4)
-                # sigmas = sigma_mlp_dict['network'](input) # (h,w)
                 sigmas = sigma_mlp_dict['network'](diff)  # (h,w)
-
-                # sigmas = sigmas.view(h,w) + 1e-6
                 sigmas = sigmas.squeeze() #(h, w)
                 sigmas = torch.where(sigmas < .01, .01, sigmas)
-                # NLL + SSIM Loss
+                ssim_loss = ssim(image, gt_image)
                 error = (image - gt_image) ** 2 / (2*sigmas) + torch.log(sigmas) / 2
-                loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+                loss = (1.0 - opt.lambda_dssim) * error.mean() + opt.lambda_dssim * (1.0 -ssim_loss)
                 if (iteration in checkpoint_iterations):
                     mlp_path = scene.model_path + f"/model_{iteration}.pth"
                     torch.save(sigma_mlp_dict['network'].state_dict(), mlp_path)
@@ -304,7 +298,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             if args.method == 'vcam':
                 cur_iter = iteration - base_iter
-                if cur_iter % opt.opacity_reset_interval > 200:
+                if (cur_iter % opt.opacity_reset_interval > 200):
                     sigma_mlp_dict['optimizer'].step()
                     sigma_mlp_dict['scheduler'].step()
                     sigma_mlp_dict['optimizer'].zero_grad()
@@ -442,6 +436,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_emsemble", default=None, type=int, help="num of view for emsembling training")
     parser.add_argument("--n_vcam", default=6, type=int, help="num of virtual camera")
     parser.add_argument("--r_scale", default=0.1, type=float, help="sample range depth ratio")
+    parser.add_argument("--weight_path", default=None, type=str, help="load a pretrained ckpt to start")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     if args.log_every_image:
@@ -462,7 +457,6 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     args.port = find_free_port()
     print(f"GUI at: {args.ip}:{args.port}")
-
 
 
     network_gui.init(args.ip, args.port)
