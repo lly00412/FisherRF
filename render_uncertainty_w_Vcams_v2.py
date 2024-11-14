@@ -122,6 +122,25 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
                                                                     depth_tgt=rd_depths,
                                                                     tgt2src_transform=rd2virs)
                 # breakpoint()
+                # # breakpoint()
+                # vcam_path = os.path.join(args.model_path, "vcams")
+                # torchvision.utils.save_image(pred_img.detach(), os.path.join(vcam_path, 'pred.jpg'))
+                # torchvision.utils.save_image(vir_pred_imgs[0].detach(), os.path.join(vcam_path,'vir_0.jpg'))
+                # torchvision.utils.save_image(vir_pred_imgs[5].detach(), os.path.join(vcam_path, 'vir_5.jpg'))
+                #
+                # mask = (pred_img.mean(0)==1.)
+                # vir2rd_pred_img = vir2rd_pred_imgs[0]
+                # vir2rd_pred_img[..., mask] = 1.
+                #
+                # from utils.plot_utils import *
+                # depth = vir2rd_depths[0]
+                # depth = colormap(depth,cmap='viridis')
+                # import matplotlib
+                # matplotlib.pyplot.imsave(os.path.join(vcam_path, 'vir2rd_depth_0.jpg'), depth.detach().cpu().numpy(),cmap='')
+                # torchvision.utils.save_image(vir2rd_pred_img.detach(), os.path.join(vcam_path, 'vir2rd_0.jpg'))
+                # torchvision.utils.save_image(depth, os.path.join(vcam_path, 'vir2rd_depth_0.jpg'))
+                #
+
                 # torchvision.utils.save_image(pred_img.detach(),"./output/m360/debug/rgb_pred.jpg")
                 # torchvision.utils.save_image(vir_pred_imgs[0].detach(), "./output/m360/debug/vir_rgb_pred_0.jpg")
                 # torchvision.utils.save_image(vir2rd_pred_imgs[0].detach(), "./output/m360/debug/vir2rd_rgb_pred_0.jpg")
@@ -218,6 +237,9 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     ROCs = {}
     AUCs = {}
     AUSEs = {}
+
+    test_views = [test_views[i] for i in args.test_idxs]
+
     with torch.no_grad():
         for idx, view in enumerate(tqdm(test_views, desc="Rendering on test set")):
             
@@ -246,6 +268,49 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             sns.heatmap(rests['rgb_err'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
             plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
             plt.close()
+
+            breakpoint()
+            from utils.plot_utils import *
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            fig, ax = plt.subplots(1)
+            vcam_path = os.path.join(args.model_path, "vcams")
+
+            rgb_std = colormap(rgb_std)
+            torchvision.utils.save_image(rgb_std.detach(), os.path.join(vcam_path,'turbo.jpg'))
+
+            rgb_std = rests['vcu(6 vcams, 0.1 med)']
+            plt.close()
+            percentail = torch.quantile(rgb_std[mask], 0.6)
+            rgb_std_clipped = torch.clip(rgb_std, max=percentail)
+
+            plt.figure(facecolor='white')
+            fig, ax = plt.subplots(1)
+            heatmap = sns.heatmap(rgb_std_clipped.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy(),cbar=False, cmap="viridis")
+            ax.axis('off')
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="8%", pad=0.3)
+            cbar = fig.colorbar(heatmap.collections[0], cax=cax, orientation='vertical')
+            cbar.set_ticks([data_min, data_max])
+            cbar.set_ticklabels(['min', 'max'])
+            plt.tight_layout(pad=0.1)
+            plt.savefig(os.path.join(vcam_path, 'vcurf_heatmap_0.jpg'))
+            # plt.savefig(os.path.join(vcam_path,'hist.jpg'))
+
+
+
+            unc_min = 0
+            unc_max = 3
+            rgb_std = torch.clip((rgb_std - np.minimum(unc_min, unc_max)) / np.abs(unc_max - unc_min), 0, 1)
+            im = ax.imshow(rgb_std.cpu().numpy(), cmap="jet")
+            ax.axis("off")
+            fname = os.path.join(vcam_path,'vcurf_uncert_0.jpg')
+            fig.savefig(fname, dpi=300, bbox_inches='tight', pad_inches=0)
+
+            sns.heatmap(rgb_std.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+            # , cmap="viridis")
+
+            plt.savefig(os.path.join(vcam_path,'vcurf_heatmap_0.jpg'))
+
 
             if args.render_vcam:
                 # save l2 diff
@@ -394,6 +459,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False, override_train_idxs=override_train_idxs, override_test_idxs=override_test_idxs)
 
     bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+    # bg_color = [1, 1, 1]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     if args.current:
@@ -418,6 +484,8 @@ if __name__ == "__main__":
     parser.add_argument("--render_vcam", action="store_true", help="render uncertainty from virtual cameras")
     parser.add_argument("--n_vcam", nargs="+", default=[2,4,6,8], type=int, help="num of virtual cameras")
     parser.add_argument("--r_scale", nargs="+", default=[0.05, 0.1, 0.25, 0.5], type=float, help="radiaus scale of the sampling space")
+    parser.add_argument("--test_idxs", nargs="+", default=[67], type=int,
+                        help="index of test images to evaluate")
     # parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)

@@ -15,3 +15,10 @@ def colormap(map, cmap="turbo",max=None, min=None):
     map = (map * 255).round().long().squeeze()
     map = colors[map].permute(2,0,1)
     return map
+
+
+def depth2img(depth):
+    depth = (depth-depth.min())/(depth.max()-depth.min())
+    depth_img = cv2.applyColorMap((depth*255).astype(np.uint8),
+                                  cv2.COLORMAP_TURBO)
+    return depth_img
