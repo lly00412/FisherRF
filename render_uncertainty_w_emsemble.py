@@ -53,6 +53,18 @@ def capture(self):
         # self.spatial_lr_scale,
     )
 
+def plot_unmap(rgb_std,mask,fname,q=0.6):
+    percentail = torch.quantile(rgb_std[mask], q=q)
+    rgb_std_clipped = torch.clip(rgb_std, max=percentail)
+    data_min = min(0.,rgb_std[mask].min())
+    data_max = percentail.cpu().numpy()
+    plt.figure(facecolor='white')
+    heatmap = sns.heatmap(rgb_std_clipped.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy(), cbar=False, cmap="viridis")
+    plt.axis('off')
+    plt.tight_layout(pad=0.1)
+    plt.savefig(fname)
+    plt.close()
+
 @torch.no_grad()
 def render_uncertainty_for_emsemble(dataset : ModelParams, iteration : int, pipeline : PipelineParams, root_path,args):
     gaussians = GaussianModel(dataset.sh_degree)
@@ -85,6 +97,9 @@ def render_uncertainty_for_emsemble(dataset : ModelParams, iteration : int, pipe
     AUCs = {}
     ROCs = {}
     AUSEs = {}
+    if hasattr(args, 'test_idxs'):
+        test_views = [test_views[i] for i in args.test_idxs]
+
     with torch.no_grad():
         for idx, view in enumerate(tqdm(test_views, desc="Rendering on test set")):
             gt_img = view.original_image[0:3, :, :]
@@ -106,7 +121,8 @@ def render_uncertainty_for_emsemble(dataset : ModelParams, iteration : int, pipe
 
             # save outputs
             torchvision.utils.save_image(expected_pred_img, os.path.join(render_path, f"test_{view.image_name}.png"))
-            mask = (expected_depth > 0.)
+            mask = (expected_depth > 0.).detach().cpu()
+
 
             # save depth
             plt.figure(facecolor='white')
@@ -115,19 +131,28 @@ def render_uncertainty_for_emsemble(dataset : ModelParams, iteration : int, pipe
             plt.close()
 
             # save error
-            plt.figure(facecolor='white')
-            sns.heatmap(rgb_err.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
-            plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
-            plt.close()
+            # plt.figure(facecolor='white')
+            # sns.heatmap(rgb_err.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+            # plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
+            # plt.close()
+            fname = os.path.join(error_path, f"{view.image_name}.jpg")
+            plot_unmap(rgb_err.detach().cpu(), mask, fname, q=0.8)
+
 
             # save uncertainty
-            sns.heatmap(torch.log(depth_std).detach().cpu(), square=True)
-            plt.savefig(os.path.join(eval_path, f"depth_std_{view.image_name}.jpg"))
-            plt.close()
+            # sns.heatmap(torch.log(depth_std).detach().cpu(), square=True)
+            # plt.savefig(os.path.join(eval_path, f"depth_std_{view.image_name}.jpg"))
+            # plt.close()
 
-            sns.heatmap(torch.log(rgb_std).detach().cpu(), square=True)
-            plt.savefig(os.path.join(eval_path, f"rgb_std_{view.image_name}.jpg"))
-            plt.close()
+            fname = os.path.join(eval_path, f"depth_std_{view.image_name}.jpg")
+            plot_unmap(depth_std.detach().cpu(), mask, fname, q=0.8)
+
+            # sns.heatmap(torch.log(rgb_std).detach().cpu(), square=True)
+            # plt.savefig(os.path.join(eval_path, f"rgb_std_{view.image_name}.jpg"))
+            # plt.close()
+
+            fname = os.path.join(eval_path, f"rgb_std_{view.image_name}.jpg")
+            plot_unmap(rgb_std.detach().cpu(), mask, fname, q=0.8)
 
             np.savez(os.path.join(eval_path, f"uncertainty_{idx:03d}_{view.image_name}.npz"),
                      depth_std=depth_std.cpu(), rgb_std=rgb_std.cpu(),
@@ -162,6 +187,10 @@ def render_uncertainty_for_emsemble(dataset : ModelParams, iteration : int, pipe
                     AUCs[val].append(auc)
                     AUSEs[val].append(ause)
 
+            breakpoint()
+            roc_fname = os.path.join(roc_path, '{0:05d}'.format(idx) + ".npz")
+            np.savez(roc_fname, roc_dict=rocs)
+
             plot_file = os.path.join(roc_path, '{0:05d}'.format(idx) + ".jpg")
             auc_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "auc.txt")
             ause_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "ause.txt")
@@ -191,6 +220,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             render_pkg = modified_render(view, gaussians, pipeline, background)
             pred_img = render_pkg["render"]
             depth = render_pkg["depth"]
+
             np.savez(os.path.join(render_path, f"emsemble_{idx:03d}_{view.image_name}.npz"),
                      depth=depth.cpu(), pred_img=pred_img.cpu(),
                      )
@@ -286,6 +316,8 @@ if __name__ == "__main__":
     parser.add_argument("--depth_only", action="store_true", help="render depth only")
     parser.add_argument("--current", action="store_true", help="render uncertainty from current view")
     parser.add_argument("--emsemble_seeds", nargs="+", default=[0,500,1000,2000,600], type=int, help="seeds for emsemble models")
+    parser.add_argument("--test_idxs", nargs="+", default=None, type=int,
+                        help="index of test images to evaluate")
     # parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
 
     cmdlne_string = sys.argv[1:]

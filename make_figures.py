@@ -9,24 +9,17 @@ from utils.plot_utils import *
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
-def plot_unmap(model_path,rgb_std,mask,fname,q=0.6):
+def plot_unmap(fname,rgb_std,mask,q=0.6):
     fig, ax = plt.subplots(1)
-    vcam_path = os.path.join(model_path, "vcams")
     percentail = torch.quantile(rgb_std[mask], q=q)
     rgb_std_clipped = torch.clip(rgb_std, max=percentail)
     data_min = 0.0
     data_max = percentail.cpu().numpy()
     plt.figure(facecolor='white')
-    fig, ax = plt.subplots(1)
     heatmap = sns.heatmap(rgb_std_clipped.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy(), cbar=False, cmap="viridis")
-    ax.axis('off')
-    # divider = make_axes_locatable(ax)
-    # cax = divider.append_axes("right", size="8%", pad=0.3)
-    # cbar = fig.colorbar(heatmap.collections[0], cax=cax, orientation='vertical')
-    # cbar.set_ticks([data_min, data_max])
-    # cbar.set_ticklabels(['min', 'max'])
-    plt.tight_layout(pad=0.1)
-    plt.savefig(os.path.join(vcam_path, fname))
+    plt.axis('off')
+    plt.tight_layout(pad=0)
+    plt.savefig(fname)
     plt.close()
 
 if __name__ == '__main__':
@@ -117,45 +110,51 @@ if __name__ == '__main__':
 
     output_path = "/mnt/Data2/liyan/MF-NeRF/results/colmap/"
     dataset = 'nerf_llff/NGP/fewshot15/'
-    scene = 'horns'
+    scene = 'room'
     load_path = os.path.join(output_path, dataset, scene)
-    idx = '000'
+    idx = '004'
 
     save_path = os.path.join(load_path, 'papers')
 
     e_file = os.path.join(load_path, f'{idx}_e.npy')
     err = np.load(e_file,allow_pickle=True)
     mask = (err>0.)
-    save_name = f'e_{idx}.jpg'
-    plot_unmap(save_path, torch.from_numpy(err), torch.from_numpy(mask), save_name, q=0.8)
+    save_name = os.path.join(save_path,f'e_{idx}.jpg')
+    plot_unmap(save_name, torch.from_numpy(err), torch.from_numpy(mask), q=0.8)
 
     method = 'mcd_d'
     u_file = os.path.join(load_path, f'{idx}_{method}_u.npy')
     unc = np.load(u_file,allow_pickle=True)
     unc = unc.reshape(err.shape)
-    save_name = f'{method}_{idx}.jpg'
-    plot_unmap(save_path, torch.from_numpy(unc), torch.from_numpy(mask), save_name, q=0.8)
+    save_name = os.path.join(save_path, f'{method}_{idx}.jpg')
+    plot_unmap(save_name, torch.from_numpy(unc), torch.from_numpy(mask), q=0.8)
 
     method = 'mcd_r'
     u_file = os.path.join(load_path, f'{idx}_{method}_u.npy')
     unc = np.load(u_file, allow_pickle=True)
     unc = unc.reshape(err.shape)
-    save_name = f'{method}_{idx}.jpg'
-    plot_unmap(save_path, torch.from_numpy(unc), torch.from_numpy(mask), save_name, q=0.8)
+    save_name = os.path.join(save_path, f'{method}_{idx}.jpg')
+    plot_unmap(save_name, torch.from_numpy(unc), torch.from_numpy(mask), q=0.8)
 
     method = 'entropy'
     u_file = os.path.join(load_path, f'{idx}_{method}_u.npy')
     unc = np.load(u_file, allow_pickle=True)
     unc = unc.reshape(err.shape)
-    save_name = f'{method}_{idx}.jpg'
-    plot_unmap(save_path, torch.from_numpy(unc), torch.from_numpy(mask), save_name, q=0.7)
+    save_name = os.path.join(save_path, f'{method}_{idx}.jpg')
+    plot_unmap(save_name, torch.from_numpy(unc), torch.from_numpy(mask), q=0.7)
 
     method = 'warp'
     u_file = os.path.join(load_path, f'{idx}_{method}_u.npy')
     unc = np.load(u_file, allow_pickle=True)
     unc = unc.reshape(err.shape)
-    save_name = f'{method}_{idx}.jpg'
-    plot_unmap(save_path, torch.from_numpy(unc), torch.from_numpy(mask), save_name, q=0.6)
+    save_name = os.path.join(save_path, f'vcurf_{idx}.jpg')
+    plot_unmap(save_name, torch.from_numpy(unc), torch.from_numpy(mask), q=0.6)
+
+    breakpoint()
+
+    roc_file = os.path.join(load_path, f'{idx}_roc.npz')
+    roc_dict = np.load(roc_file, allow_pickle=True)['roc_dict'].tolist()
+
 
 
 

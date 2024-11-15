@@ -52,6 +52,19 @@ def capture(self):
         # self.spatial_lr_scale,
     )
 
+def plot_unmap(rgb_std,mask,fname,q=0.6):
+    percentail = torch.quantile(rgb_std[mask], q=q)
+    rgb_std_clipped = torch.clip(rgb_std, max=percentail)
+    data_min = min(0.,rgb_std[mask].min())
+    data_max = percentail.cpu().numpy()
+    plt.figure(facecolor='white')
+    heatmap = sns.heatmap(rgb_std_clipped.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy(), cbar=False, cmap="viridis")
+    plt.axis('off')
+    plt.tight_layout(pad=0.1)
+    plt.savefig(fname)
+    plt.close()
+
+
 @torch.no_grad()
 def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,args):
     ###########################
@@ -238,7 +251,8 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     AUCs = {}
     AUSEs = {}
 
-    test_views = [test_views[i] for i in args.test_idxs]
+    if hasattr(args, 'test_idxs'):
+        test_views = [test_views[i] for i in args.test_idxs]
 
     with torch.no_grad():
         for idx, view in enumerate(tqdm(test_views, desc="Rendering on test set")):
@@ -255,7 +269,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             ################################
             #  save all outputs
             ################################
-            mask = (depth>0.)
+            mask = (depth>0.).detach().cpu()
 
             # save depth
             plt.figure(facecolor='white')
@@ -264,26 +278,34 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             plt.close()
 
             # save error
-            plt.figure(facecolor='white')
-            sns.heatmap(rests['rgb_err'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
-            plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
-            plt.close()
-
+            # plt.figure(facecolor='white')
+            # sns.heatmap(rests['rgb_err'].detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
+            # plt.savefig(os.path.join(error_path, f"{view.image_name}.jpg"))
+            # plt.close()
+            fname = os.path.join(error_path, f"{view.image_name}.jpg")
+            plot_unmap(rests['rgb_err'].detach().cpu(), mask, fname, q=0.8)
 
 
             if args.render_vcam:
                 # save l2 diff
                 for N in args.n_vcam:
                     for scale in args.r_scale:
-                        plt.figure(facecolor='white')
-                        sns.heatmap(torch.log(rests[f'vcu({N} vcams, {scale} med)']).detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
-                        plt.savefig(os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg"))
-                        plt.close()
+                        # plt.figure(facecolor='white')
+                        # sns.heatmap(torch.log(rests[f'vcu({N} vcams, {scale} med)']).detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+                        # plt.savefig(os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg"))
+                        # plt.close()
+                        fname = os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg")
+                        plot_unmap(rests[f'vcu({N} vcams, {scale} med)'].detach().cpu(), mask, fname, q=0.8)
+
 
             # save fisherRF
-            sns.heatmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), square=True)
-            plt.savefig(os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg"))
-            plt.close()
+            # sns.heatmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), square=True)
+            # plt.savefig(os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg"))
+            # plt.close()
+
+            fname = os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg")
+            #plot_unmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), mask, fname, q=0.95)
+            plot_unmap((uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), mask, fname, q=0.8)
 
             # sns.heatmap(torch.log(uncertanity_map_D / pixel_gaussian_counter).detach().cpu(), square=True)
             # plt.savefig(os.path.join(eval_path, f"fisher_D_{view.image_name}.jpg"))
@@ -314,6 +336,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             rocs = {}
             aucs = {}
             auses = {}
+
             for val in values.keys():
                 roc, auc = compute_roc(opt=values[opt_label], est=values[val], intervals=20)
                 _, ause = compute_ause(opt=values[opt_label], est=values[val], intervals=100)
@@ -328,6 +351,10 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
                     ROCs[val].append(roc)
                     AUCs[val].append(auc)
                     AUSEs[val].append(ause)
+
+            breakpoint()
+            roc_fname = os.path.join(roc_path, '{0:05d}'.format(idx) + ".npz")
+            np.savez(roc_fname,roc_dict = rocs)
 
             plot_file = os.path.join(roc_path, '{0:05d}'.format(idx) + ".jpg")
             auc_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "auc.txt")
@@ -443,7 +470,7 @@ if __name__ == "__main__":
     parser.add_argument("--render_vcam", action="store_true", help="render uncertainty from virtual cameras")
     parser.add_argument("--n_vcam", nargs="+", default=[2,4,6,8], type=int, help="num of virtual cameras")
     parser.add_argument("--r_scale", nargs="+", default=[0.05, 0.1, 0.25, 0.5], type=float, help="radiaus scale of the sampling space")
-    parser.add_argument("--test_idxs", nargs="+", default=[67], type=int,
+    parser.add_argument("--test_idxs", nargs="+", default=None, type=int,
                         help="index of test images to evaluate")
     # parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
     args = get_combined_args(parser)

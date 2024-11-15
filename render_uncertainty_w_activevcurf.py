@@ -77,6 +77,7 @@ def render_uncertainty(view, gaussians, sigma_mlp, pipeline, background, args):
     gt_img = view.original_image[0:3, :, :]
     rgb_err = torch.mean((pred_img - gt_img)**2,0)
     rests['rgb_err'] = rgb_err
+    rests['mask'] = (pred_img[0] == background[0]) & (pred_img[1] == background[1]) & (pred_img[2] == background[2])
     uncertainty = sigmas  # (h , w)
 
     return pred_img, uncertainty, rests
@@ -93,10 +94,10 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     makedirs(roc_path, exist_ok=True)
 
     sigma_mlp = create_mlp(in_dim= 4*args.n_vcam,
-                            num_layers = 3,
+                            num_layers = 5,
                             layer_width =128,
                             out_dim= 1,
-                            skip_connections=None,
+                            skip_connections=[2,4],
                             activation=nn.ReLU,
                             out_activation=None,
                             dropout_layers=[-1],
@@ -107,7 +108,8 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     sigma_mlp.load_state_dict(ckpt_dict)
     sigma_mlp.eval()
 
-    test_views = [test_views[i] for i in args.test_idxs]
+    if hasattr(args, 'test_idxs'):
+        test_views = [test_views[i] for i in args.test_idxs]
 
     ROCs = {}
     AUCs = {}
@@ -124,24 +126,24 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             # save outputs
             torchvision.utils.save_image(pred_img.detach(), os.path.join(render_path, f"{view.image_name}.png"))
 
-            err = rests['rgb_err'].detach().cpu()
-            q_90 = torch.quantile(uncertainty[err > 0.], 90 / 100.0)
-            pred_img1 = pred_img.detach().clone()
-            pred_img1[..., uncertainty > q_90] = 0.
-            torchvision.utils.save_image(pred_img1.detach(), os.path.join(render_path, f"{view.image_name}_q90.png"))
-
-            q_70 = torch.quantile(uncertainty[err > 0.], 70 / 100.0)
-            pred_img2 = pred_img.detach().clone()
-            pred_img2[..., uncertainty > q_70] = 0.
-            torchvision.utils.save_image(pred_img2.detach(), os.path.join(render_path, f"{view.image_name}_q70.png"))
-
-            q_50 = torch.quantile(uncertainty[err > 0.], 50 / 100.0)
-            pred_img3 = pred_img.detach().clone()
-            pred_img3[..., uncertainty > q_50] = 0.
-            torchvision.utils.save_image(pred_img3.detach(), os.path.join(render_path, f"{view.image_name}_q50.png"))
-
-
-            breakpoint()
+            # err = rests['rgb_err'].detach().cpu()
+            # q_90 = torch.quantile(uncertainty[err > 0.], 90 / 100.0)
+            # pred_img1 = pred_img.detach().clone()
+            # pred_img1[..., uncertainty > q_90] = 0.
+            # torchvision.utils.save_image(pred_img1.detach(), os.path.join(render_path, f"{view.image_name}_q90.png"))
+            #
+            # q_70 = torch.quantile(uncertainty[err > 0.], 70 / 100.0)
+            # pred_img2 = pred_img.detach().clone()
+            # pred_img2[..., uncertainty > q_70] = 0.
+            # torchvision.utils.save_image(pred_img2.detach(), os.path.join(render_path, f"{view.image_name}_q70.png"))
+            #
+            # q_50 = torch.quantile(uncertainty[err > 0.], 50 / 100.0)
+            # pred_img3 = pred_img.detach().clone()
+            # pred_img3[..., uncertainty > q_50] = 0.
+            # torchvision.utils.save_image(pred_img3.detach(), os.path.join(render_path, f"{view.image_name}_q50.png"))
+            #
+            #
+            # breakpoint()
 
             # # save depth
             # plt.figure(facecolor='white')
@@ -165,7 +167,11 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             #             plt.close()
 
             # save uncertainty
-            sns.heatmap(uncertainty.detach().cpu(), square=True)
+            if 'mask' in rests.keys():
+                mask = rests['mask']
+            else:
+                mask = torch.ones_like(uncertainty.shape)
+            sns.heatmap(uncertainty.detach().cpu(), square=True, mask= mask.cpu().numpy())
             plt.savefig(os.path.join(eval_path, f"vcurf_{view.image_name}.jpg"))
             plt.close()
 
@@ -187,11 +193,12 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             ################################
             opt_label = 'rgb_err'
             values = {
-                'activecurf':uncertainty.flatten(),
+                'activecurf':uncertainty[~mask].flatten(),
             }
 
             for k in rests.keys():
-                values[k] = rests[k].flatten()
+                if k!= 'mask':
+                    values[k] = rests[k][~mask].flatten()
 
             rocs = {}
             aucs = {}
@@ -325,7 +332,7 @@ if __name__ == "__main__":
     parser.add_argument("--render_vcam", action="store_true", help="render uncertainty from virtual cameras")
     parser.add_argument("--n_vcam", default=[2,4,6,8], type=int, help="num of virtual cameras")
     parser.add_argument("--r_scale", default=0.1, type=float, help="radiaus scale of the sampling space")
-    parser.add_argument("--test_idxs", nargs="+", default=[67], type=int,
+    parser.add_argument("--test_idxs", nargs="+", default=None, type=int,
                         help="index of test images to evaluate")
     # parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
     args = get_combined_args(parser)
