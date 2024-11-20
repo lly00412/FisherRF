@@ -160,12 +160,13 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
                 MAX_VALUE = rgb_l2.flatten().max()
                 norm_rgb_sigmas = (rgb_l2 - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
 
-                # vcu = norm_rgb_sigmas + norm_depth_sigmas
-                # rests[f'vcu({N} vcams, {scale} med)'] = vcu
+                vcu = norm_rgb_sigmas + norm_depth_sigmas
+                rests[f'vcu({N} vcams, {scale} med)'] = vcu
 
-                rests['depth_only'] = norm_depth_sigmas
-                rests['rgb_only'] = norm_rgb_sigmas
-                rests['depth+rgb'] = norm_rgb_sigmas + norm_depth_sigmas
+
+                # rests['depth_only'] = norm_depth_sigmas
+                # rests['rgb_only'] = norm_rgb_sigmas
+                # rests['depth+rgb'] = norm_rgb_sigmas + norm_depth_sigmas
 
 
                 # if args.only_depth:
@@ -177,6 +178,67 @@ def render_uncertainty(view, gaussians, pipeline, background, hessian_color_C,ar
 
 
                 # vcu = norm_rgb_sigmas + norm_depth_sigmas
+
+        ################################
+        #  compute uncertainty by vs-nerf
+        ################################
+        N = 4
+        Vcams = []
+        for d in ['u','d','l','r']:
+            Vcam = GetVcam.get_near_cam_by_look_at(look_at=look_at, direction=d)
+            Vcams.append(Vcam)
+
+        rd_depth = depth.clone().unsqueeze(0).unsqueeze(0)
+        rd_depths = rd_depth.repeat(N, 1, 1, 1)
+        rd_pred_imgs = pred_img.clone().unsqueeze(0).repeat(N, 1, 1, 1)
+
+        vir_depths = []
+        vir_pred_imgs = []
+        rd2virs = []
+        for vir_view in Vcams:
+            vir_render_pkg = modified_render(vir_view, gaussians, pipeline, background)
+            vir_depth = vir_render_pkg['depth']
+            vir_pred_img = vir_render_pkg['render']
+            vir_w2c = vir_view.world_view_transform.transpose(0, 1)
+            rd2vir = vir_w2c @ rd_c2w
+            rd2virs.append(rd2vir)
+            vir_depths.append(vir_depth.unsqueeze(0))
+            vir_pred_imgs.append(vir_pred_img)
+        vir_depths = torch.stack(vir_depths)
+        vir_pred_imgs = torch.stack(vir_pred_imgs)
+        rd2virs = torch.stack(rd2virs)
+        vir2rd_pred_imgs, vir2rd_depths, nv_mask = backwarp(img_src=vir_pred_imgs, depth_src=vir_depths,
+                                                            depth_tgt=rd_depths,
+                                                            tgt2src_transform=rd2virs)
+        ################################
+        #  compute uncertainty by l2 diff
+        ################################
+        # depth uncertainty
+        vir2rd_depth_sum = vir2rd_depths.sum(0)
+        numels = float(N) - nv_mask.sum(0)
+        vir2rd_depth = torch.zeros_like(rd_depth.squeeze(0))
+        vir2rd_depth[numels > 0] = vir2rd_depth_sum[numels > 0] / numels[numels > 0]
+        depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth) ** 2
+        depth_l2 = depth_l2.squeeze(0)
+        MIN_VALUE = depth_l2.flatten().min()
+        MAX_VALUE = depth_l2.flatten().max()
+        norm_depth_sigmas = (depth_l2 - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+        # rests[f'depth_l2({N} vcams, {scale} med)'] = depth_l2
+
+        # rgb uncertainty
+        vir2rd_pred_sum = vir2rd_pred_imgs.sum(0).mean(0, keepdim=True)
+        rendering_ = pred_img.mean(0, keepdim=True)
+        vir2rd_pred = torch.zeros_like(rendering_)
+        vir2rd_pred[numels > 0] = vir2rd_pred_sum[numels > 0] / numels[numels > 0]
+        rgb_l2 = (rendering_ - vir2rd_pred) ** 2
+        rgb_l2 = rgb_l2.squeeze(0)
+        MIN_VALUE = rgb_l2.flatten().min()
+        MAX_VALUE = rgb_l2.flatten().max()
+        norm_rgb_sigmas = (rgb_l2 - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+
+        vcu = norm_rgb_sigmas + norm_depth_sigmas
+        rests[f'vs-nerf'] = vcu
+
 
     return pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests
 
