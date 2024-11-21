@@ -214,6 +214,8 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     render_path = os.path.join(model_path, "renders")
     makedirs(render_path, exist_ok=True)
 
+    if hasattr(args, 'test_idxs'):
+        test_views = [test_views[i] for i in args.test_idxs]
     with torch.no_grad():
         for idx, view in enumerate(tqdm(test_views, desc="Rendering on test set")):
 

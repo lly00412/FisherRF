@@ -52,15 +52,15 @@ def capture(self):
         # self.spatial_lr_scale,
     )
 
-def plot_unmap(rgb_std,mask,fname,q=0.6):
+def plot_unmap(rgb_std,mask,fname,cmap="viridis",q=0.6):
     percentail = torch.quantile(rgb_std[mask], q=q)
     rgb_std_clipped = torch.clip(rgb_std, max=percentail)
     data_min = min(0.,rgb_std[mask].min())
     data_max = percentail.cpu().numpy()
     plt.figure(facecolor='white')
-    heatmap = sns.heatmap(rgb_std_clipped.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy(), cbar=False, cmap="viridis")
+    heatmap = sns.heatmap(rgb_std_clipped.detach().cpu(), square=True, mask=~mask.detach().cpu().numpy(), cbar=False, cmap=cmap)
     plt.axis('off')
-    plt.tight_layout(pad=0.1)
+    plt.tight_layout(pad=0)
     plt.savefig(fname)
     plt.close()
 
@@ -321,43 +321,7 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             # cur_hessian_color_D = hessian_color_D * gaussian_depths.clamp(min=0)
             pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color_C, args)
 
-            ################################
-            #  save all outputs
-            ################################
             mask = (depth>0.).detach().cpu()
-
-            # save depth
-            # plt.figure(facecolor='white')
-            # sns.heatmap(depth.detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
-            # plt.savefig(os.path.join(depth_path, f"{view.image_name}.jpg"))
-            # plt.close()
-            #
-            # # save error
-            # fname = os.path.join(error_path, f"{view.image_name}.jpg")
-            # plot_unmap(rests['rgb_err'].detach().cpu(), mask, fname, q=0.8)
-            #
-            #
-            # if args.render_vcam:
-            #     # save l2 diff
-            #     for N in args.n_vcam:
-            #         for scale in args.r_scale:
-            #             # plt.figure(facecolor='white')
-            #             # sns.heatmap(torch.log(rests[f'vcu({N} vcams, {scale} med)']).detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
-            #             # plt.savefig(os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg"))
-            #             # plt.close()
-            #             fname = os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg")
-            #             plot_unmap(rests[f'vcu({N} vcams, {scale} med)'].detach().cpu(), mask, fname, q=0.8)
-            #
-            #
-            # # save fisherRF
-            # # sns.heatmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), square=True)
-            # # plt.savefig(os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg"))
-            # # plt.close()
-            #
-            # fname = os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg")
-            # #plot_unmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), mask, fname, q=0.95)
-            # plot_unmap((uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), mask, fname, q=0.8)
-
 
             # save raw output
             save_rests = {}
@@ -403,6 +367,8 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             roc_fname = os.path.join(roc_path, '{0:05d}'.format(idx) + ".npz")
             np.savez(roc_fname,roc_dict = rocs)
 
+            # breakpoint()
+
             plot_file = os.path.join(roc_path, '{0:05d}'.format(idx) + ".jpg")
             auc_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "auc.txt")
             ause_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "ause.txt")
@@ -410,6 +376,48 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             write_auc(AUC_dict=aucs, txt_name=auc_file)
             write_auc(AUC_dict=auses,txt_name=ause_file)
 
+            ################################
+            #  save all outputs
+            ################################
+
+            # save depth
+            # plt.figure(facecolor='white')
+            # sns.heatmap(depth.detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
+            # plt.savefig(os.path.join(depth_path, f"{view.image_name}.jpg"))
+            # plt.close()
+            fname = os.path.join(depth_path, f"{view.image_name}.jpg")
+            plot_unmap(depth.detach().cpu(), mask, fname, cmap='magma', q=0.95)
+
+            #
+            # # save error
+            fname = os.path.join(error_path, f"{view.image_name}.jpg")
+            plot_unmap(rests['rgb_err'].detach().cpu(), mask, fname, q=0.8)
+            #
+            #
+            if args.render_vcam:
+                # save l2 diff
+                for N in args.n_vcam:
+                    for scale in args.r_scale:
+                        # plt.figure(facecolor='white')
+                        # sns.heatmap(torch.log(rests[f'vcu({N} vcams, {scale} med)']).detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
+                        # plt.savefig(os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg"))
+                        # plt.close()
+                        fname = os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg")
+                        plot_unmap(rests[f'vcu({N} vcams, {scale} med)'].detach().cpu(), mask, fname, q=0.8)
+                if 'vs-nerf' in rests.keys():
+                    fname = os.path.join(eval_path, f"vsnerf_{view.image_name}.jpg")
+                    plot_unmap(rests[f'vs-nerf'].detach().cpu(), mask, fname, q=0.8)
+            #
+            # # save fisherRF
+            # # sns.heatmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), square=True)
+            # # plt.savefig(os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg"))
+            # # plt.close()
+            #
+            fname = os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg")
+            #plot_unmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), mask, fname, q=0.95)
+            plot_unmap((uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), mask, fname, q=0.8)
+
+            # breakpoint()
 
         for val in ROCs.keys():
             ROCs[val] = np.array(ROCs[val]).mean(0)
