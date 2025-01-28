@@ -260,6 +260,13 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     makedirs(error_path, exist_ok=True)
     makedirs(roc_path, exist_ok=True)
 
+    floter_path = os.path.join(render_path, f"floater_remover")
+    vcu_floter_path = os.path.join(floter_path, f"vcu")
+    fisher_floter_path = os.path.join(floter_path, f"fisherRF")
+    makedirs(vcu_floter_path, exist_ok=True)
+    makedirs(fisher_floter_path, exist_ok=True)
+
+
     if args is not None:
         if args.render_vcam:
             vir_path = os.path.join(model_path, "vcams")
@@ -327,9 +334,12 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color_C, args)
 
             mask = (depth>0.).detach().cpu()
-            floter_path = os.path.join(render_path, f"floater_remover")
             q_pts = [0.95,0.9,0.85,0.8,0.75,0.7,0.65,0.6,0.55,0.5]
             gt_img = view.original_image[0:3, :, :]
+
+            psnr_100 = psnr(gt_img,pred_img).mean()
+            print(f'q: 100, psnr: {psnr_100}')
+
             vcu = rests['vcu(6 vcams, 0.1 med)']
             for q in q_pts:
                 u_q = torch.quantile(vcu.view(-1),q)

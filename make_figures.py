@@ -110,9 +110,9 @@ if __name__ == '__main__':
 
     output_path = "/mnt/Data2/liyan/MF-NeRF/results/colmap/"
     dataset = 'nerf_llff/NGP/fewshot15/'
-    scene = 'room'
+    scene = 'trex'
     load_path = os.path.join(output_path, dataset, scene)
-    idx = '004'
+    idx = '003'
 
     save_path = os.path.join(load_path, 'papers')
 
@@ -148,7 +148,7 @@ if __name__ == '__main__':
     unc = np.load(u_file, allow_pickle=True)
     unc = unc.reshape(err.shape)
     save_name = os.path.join(save_path, f'vcurf_{idx}.jpg')
-    plot_unmap(save_name, torch.from_numpy(unc), torch.from_numpy(mask), q=0.6)
+    plot_unmap(save_name, torch.from_numpy(unc), torch.from_numpy(mask), q=0.8)
 
     breakpoint()
 
