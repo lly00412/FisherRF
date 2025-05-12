@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" serverName="viper" remoteFilesAllowedToDisappearOnAutoupload="false">
+    <serverData>
+      <paths name="viper">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/mnt/Data2/liyan/FisherRF" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+  </component>
+</project>

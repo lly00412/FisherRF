@@ -14,6 +14,7 @@ class VarSelector(torch.nn.Module):
     def __init__(self, args) -> None:
         super().__init__()
         self.seed = args.seed
+
     
     def nbvs(self, gaussians, scene: Scene, num_views, pipe, background, exit_func) -> List[int]:
         candidate_views = list(deepcopy(scene.get_candidate_set()))
@@ -29,6 +30,7 @@ class VarSelector(torch.nn.Module):
                 raise RuntimeError("csm should exit early")
 
             render_pkg = render_variance(cam, gaussians, pipe, background)
+
             acq_score = (render_pkg["pri_var"] - render_pkg["post_var"]).sum()
             acq_scores.append(acq_score.item())
         

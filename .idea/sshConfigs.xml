@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig authType="PASSWORD" host="155.246.81.47" id="731836e0-605e-4d47-b859-0dee69b50cad" port="22" customName="viper" nameFormat="CUSTOM" username="lchen39" useOpenSSHConfig="true">
+        <option name="customName" value="viper" />
+      </sshConfig>
+    </configs>
+  </component>
+</project>

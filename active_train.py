@@ -72,12 +72,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     else:
         train_idxs = None
 
+
     schema = schema_dict[args.schema](dataset_size=len(scene.getTrainCameras()),
                                       scene=scene,
                                       train_idxs=train_idxs,
                                       num_inits=args.n_inits,
                                       n_emsemble = n_emsemble,
-                                      emsemble_seed = args.emsemble_seed)
+                                      emsemble_seed = args.emsemble_seed,
+                                      )
     print(f"schema: {schema.load_its}")
     scene.train_idxs = schema.init_views
     print(f"train cameras: {scene.train_idxs}")
@@ -337,8 +339,8 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[15_000, 20_000, 25_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[5_000, 10_000, 15_000, 20_000, 25_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[5_000, 10_000, 15_000, 20_000, 25_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
@@ -359,6 +361,9 @@ if __name__ == "__main__":
     parser.add_argument("--train_idxs", default=None, type=str, help="speical train idxs on fewshot training")
     parser.add_argument("--n_inits", default=10, type=int, help="num of view for initialization")
     parser.add_argument("--n_emsemble", default=None, type=int, help="num of view for emsembling training")
+    parser.add_argument("--n_vcam", default=6, type=int, help="num of view for virtual camera training")
+    parser.add_argument("--r_scale", default=0.1, type=float, help="radius of sampling virtual camera")
+
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
@@ -380,7 +385,6 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     args.port = find_free_port()
     print(f"GUI at: {args.ip}:{args.port}")
-
 
 
     network_gui.init(args.ip, args.port)

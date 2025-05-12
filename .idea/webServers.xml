@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="69cdb002-3302-41e3-91f1-e0c0f90a4cb8" name="viper">
+        <fileTransfer accessType="SFTP" host="155.246.81.47" port="22" sshConfigId="731836e0-605e-4d47-b859-0dee69b50cad" sshConfig="viper">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
