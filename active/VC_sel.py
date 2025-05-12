@@ -83,30 +83,30 @@ class VCSelector(torch.nn.Module):
             # depth uncertainty
             vir2rd_depth_sum = vir2rd_depths.sum(0)
             numels = float(self.n_vcam) - nv_mask.sum(0)
-            vir2rd_depth = torch.zeros_like(rd_depth.squeeze(0))
+            vir2rd_depth = torch.ones_like(rd_depth.squeeze(0))
             vir2rd_depth[numels > 0] = vir2rd_depth_sum[numels > 0] / numels[numels > 0]
             depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth) ** 2
             depth_l2 = depth_l2.squeeze(0)
             MIN_VALUE = depth_l2.flatten().min()
             MAX_VALUE = depth_l2.flatten().max()
-            norm_depth_sigmas = (depth_l2 - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+            norm_depth_sigmas[numels > 0] = (depth_l2[numels > 0] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
             # rests[f'depth_l2({N} vcams, {scale} med)'] = depth_l2
 
             # rgb uncertainty
             vir2rd_pred_sum = vir2rd_pred_imgs.sum(0).mean(0, keepdim=True)
             rendering_ = pred_img.mean(0, keepdim=True)
-            vir2rd_pred = torch.zeros_like(rendering_)
+            vir2rd_pred = torch.ones_like(rendering_)
             vir2rd_pred[numels > 0] = vir2rd_pred_sum[numels > 0] / numels[numels > 0]
             rgb_l2 = (rendering_ - vir2rd_pred) ** 2
             rgb_l2 = rgb_l2.squeeze(0)
             MIN_VALUE = rgb_l2.flatten().min()
             MAX_VALUE = rgb_l2.flatten().max()
-            norm_rgb_sigmas = (rgb_l2 - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+            norm_rgb_sigmas[numels > 0] = (rgb_l2[numels > 0] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
 
             vc_score = norm_rgb_sigmas + norm_depth_sigmas
             vcurf_scores.append(vc_score.item())
 
-        vcurf_scores = np.array(vc_score)
+        vcurf_scores = np.array(vcurf_scores)
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]
         return selected_view_idx
