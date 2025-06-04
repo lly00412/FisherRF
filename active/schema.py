@@ -31,43 +31,6 @@ class All(BaseSchema):
     def num_views_to_add(self, it: int) -> int:
         return 0
 
-class VK(BaseSchema):
-    def __init__(self,**kwargs) -> None:
-        dataset_size = kwargs.get("dataset_size")
-        obj = kwargs.get("train_idxs")
-        num_inits = kwargs.get("num_inits")
-        num_emsemble = kwargs.get("num_emsemble")
-        if obj in override_train_idxs_dict.keys():
-            self.init_views = override_train_idxs_dict[obj]
-            if len(self.init_views)>num_inits:
-                self.init_views = random.sample(self.init_views, num_inits)
-        else:
-            random.seed(0)
-            self.init_views = random.sample(range(dataset_size), num_inits)
-        if num_emsemble is not None:
-            emsemble_seed = kwargs.get("emsemble_seed")
-            random.seed(emsemble_seed)
-            self.init_views = random.sample(self.init_views, num_emsemble)
-
-        random.shuffle(self.init_views)
-        self.load_its = {}
-
-    def num_views_to_add(self, it: int) -> int:
-        return 0
-
-class V20(BaseSchema):
-    def __init__(self,**kwargs) -> None:
-        dataset_size = kwargs.get("dataset_size")
-        obj = kwargs.get("train_idxs")
-        if obj in override_train_idxs_dict.keys():
-            self.init_views = override_train_idxs_dict[obj]
-        else:
-            self.init_views = random.sample(range(dataset_size), 20)
-        random.shuffle(self.init_views)
-        self.load_its = {}
-
-    def num_views_to_add(self, it: int) -> int:
-        return 0
 
 class V20Seq1Debug(BaseSchema):
     """
@@ -94,7 +57,7 @@ class VNSeqMInplace(BaseSchema):
     Add 1 image at a time
     """
 
-    def __init__(self, dataset_size: int, scene, N: int=20, M: int=1, num_init_views: int=4, interval_epochs=100, **kwargs):
+    def __init__(self, dataset_size: int, scene, N: int=20, M: int=1, num_init_views: int=10, interval_epochs=100, **kwargs):
         """
         N: int total views to select
         M: # views to select each time
@@ -143,24 +106,21 @@ class VNSeqMInplace(BaseSchema):
                 it_base += cur_dataset_size * interval_epochs
                 num_views_left -= M
 
-V20Seq1Inplace = partial(VNSeqMInplace, N=20, M=1, num_init_views=4)
+#V20Seq1Inplace = partial(VNSeqMInplace, N=20, M=1, num_init_views=10)
+V20Seq1Inplace = partial(VNSeqMInplace, N=40, M=1, num_init_views=20)
 V10Seq1Inplace = partial(VNSeqMInplace, N=10, M=1, num_init_views=2)
 V20Seq4Inplace = partial(VNSeqMInplace, N=20, M=4, num_init_views=4, interval_epochs=300)
 
 
-# TODO: update fewshot training, customize the num of init views k
+
 
 schema_dict: Dict[str, BaseSchema] = {'all': All, "debug": V20Seq1Debug,
                                       "v20seq1_inplace": V20Seq1Inplace, "v10seq1_inplace": V10Seq1Inplace,
-                                      "v20seq4_inplace": V20Seq4Inplace, "vk": VK,
+                                      "v20seq4_inplace": V20Seq4Inplace,
                                       }
 
-override_test_idxs_dict: Dict[str, List[int]] = {}
-override_train_idxs_dict: Dict[str, List[int]] = {"blender": [0,4,22,35,36,43,57,60,63,76,1,2,51,48,80,99,25,44,54,49]}
+override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2)), "africa": list(range(6, 14, 2)),
+                                            "statue": list(range(68, 76, 2)), "torch": list(range(9, 17, 2))}
 
-# override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2)), "africa": list(range(6, 14, 2)),
-#                                             "statue": list(range(68, 76, 2)), "torch": list(range(9, 17, 2))}
-#
-# override_train_idxs_dict: Dict[str, List[int]] = {"basket": list(range(43, 50,2)), "africa": list(range(5, 14, 2)),
-#                                             "statue": list(range(67, 76, 2)), "torch": list(range(8, 17, 2)),
-#                                                   "blender": [0,4,22,35,36,43,57,60,63,76,1,2,51,48,80,99,25,44,54,49]}
+override_train_idxs_dict: Dict[str, List[int]] = {"basket": list(range(43, 50,2)), "africa": list(range(5, 14, 2)),
+                                            "statue": list(range(67, 76, 2)), "torch": list(range(8, 17, 2))}
