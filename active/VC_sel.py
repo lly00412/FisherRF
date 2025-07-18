@@ -88,7 +88,7 @@ class VCSelector(torch.nn.Module):
             ################################
             # depth uncertainty -- if find the min
             depth_l2 = (vir2rd_depths - rd_depths) **2
-            min_depth_l2 = depth_l2.min(0).values.suqeeze()
+            min_depth_l2 = depth_l2.min(0).values.squeeze()
             MIN_VALUE = min_depth_l2[~bg_mask].flatten().min()
             MAX_VALUE = min_depth_l2[~bg_mask].flatten().max()
             norm_depth_sigmas = torch.zeros_like(min_depth_l2)
@@ -96,7 +96,7 @@ class VCSelector(torch.nn.Module):
 
             # rgb uncertainty
             rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
-            min_rgb_l2 = rgb_l2.min(0).values.suqeeze()
+            min_rgb_l2 = rgb_l2.min(0).values.squeeze()
             MIN_VALUE = min_rgb_l2[~bg_mask].flatten().min()
             MAX_VALUE = min_rgb_l2[~bg_mask].flatten().max()
             norm_rgb_sigmas = torch.zeros_like(min_rgb_l2)

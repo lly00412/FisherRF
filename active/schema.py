@@ -106,8 +106,8 @@ class VNSeqMInplace(BaseSchema):
                 it_base += cur_dataset_size * interval_epochs
                 num_views_left -= M
 
-#V20Seq1Inplace = partial(VNSeqMInplace, N=20, M=1, num_init_views=10)
-V20Seq1Inplace = partial(VNSeqMInplace, N=40, M=1, num_init_views=20)
+V20Seq1Inplace = partial(VNSeqMInplace, N=20, M=1, num_init_views=4)
+# V20Seq1Inplace = partial(VNSeqMInplace, N=40, M=1, num_init_views=20)
 V10Seq1Inplace = partial(VNSeqMInplace, N=10, M=1, num_init_views=2)
 V20Seq4Inplace = partial(VNSeqMInplace, N=20, M=4, num_init_views=4, interval_epochs=300)
 
