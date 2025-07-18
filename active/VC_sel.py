@@ -82,6 +82,7 @@ class VCSelector(torch.nn.Module):
             ###############################
             bg_mask_per_channel = (pred_img == background.view(3, 1, 1))
             bg_mask = bg_mask_per_channel.all(dim=0)
+            _, h,w = pred_img.shape
 
             ###############################
             #  compute uncertainty by l2 diff
@@ -103,7 +104,10 @@ class VCSelector(torch.nn.Module):
             norm_rgb_sigmas[~bg_mask] = (min_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
 
             vc_score = norm_rgb_sigmas + norm_depth_sigmas
-            vcurf_scores.append(vc_score.mean().item())
+            if (~bg_mask).sum()>0.1*h*w:
+                vcurf_scores.append(vc_score[~bg_mask].mean().item())
+            else:
+                vcurf_scores.append(2.0)
 
         vcurf_scores = np.array(vcurf_scores)
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
