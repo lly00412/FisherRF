@@ -149,13 +149,13 @@ class BackwardWarping(nn.Module):
         pts3d_tgt = self.backproj(depth_tgt,self.inv_K)
         pts3d_src = self.transform3d(pts3d_tgt,tgt2src_transform)
         src_grid = self.projection(pts3d_src,self.K,normalized=True)
-        transformed_distance = pts3d_src[:, 2:3].view(b,1,h,w)
 
         img_tgt = F.grid_sample(img_src, src_grid, mode = 'bilinear', padding_mode = 'zeros')
         depth_src2tgt = F.grid_sample(depth_src, src_grid, mode='bilinear', padding_mode='zeros')
 
+        z_src = pts3d_src[:, 2:3].view(b, 1, h, w)
         # rm invalid depth
-        valid_depth_mask = (transformed_distance < 1e6) & (depth_src2tgt > 0)
+        valid_depth_mask = (z_src < 1e6) & (depth_src2tgt > 0)
 
         # rm invalid coords
         vaild_coord_mask = (src_grid[...,0]> -1) & (src_grid[...,0] < 1) & (src_grid[...,1]> -1) & (src_grid[...,1] < 1)

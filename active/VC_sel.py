@@ -77,36 +77,32 @@ class VCSelector(torch.nn.Module):
             vir2rd_pred_imgs, vir2rd_depths, nv_mask = backwarp(img_src=vir_pred_imgs, depth_src=vir_depths,
                                                                 depth_tgt=rd_depths,
                                                                 tgt2src_transform=rd2virs)
-            ################################
+            ###############################
+            #  fillter out backgroud pixels
+            ###############################
+            bg_mask_per_channel = (pred_img == background.view(3, 1, 1))
+            bg_mask = bg_mask_per_channel.all(dim=0)
+
+            ###############################
             #  compute uncertainty by l2 diff
             ################################
-            # depth uncertainty
-            vir2rd_depth_sum = vir2rd_depths.sum(0)
-            numels = float(self.n_vcam) - nv_mask.sum(0)
-            valid_mask = (numels > 0)
-            if numels.sum()==0:
-                print("numels is 0 --- THIS SHOULDNT HAPPEN!!!!")
-            vir2rd_depth = torch.zeros_like(rd_depth.squeeze(0))
-            vir2rd_depth[valid_mask] = vir2rd_depth_sum[valid_mask] / numels[valid_mask]
-            depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth) ** 2
-            MIN_VALUE = depth_l2[valid_mask].flatten().min()
-            MAX_VALUE = depth_l2[valid_mask].flatten().max()
-            norm_depth_sigmas = torch.ones_like(depth_l2)
-            norm_depth_sigmas[valid_mask] = (depth_l2[valid_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
-            # rests[f'depth_l2({N} vcams, {scale} med)'] = depth_l2
+            # depth uncertainty -- if find the min
+            depth_l2 = (vir2rd_depths - rd_depths) **2
+            min_depth_l2 = depth_l2.min(0).values.suqeeze()
+            MIN_VALUE = min_depth_l2[~bg_mask].flatten().min()
+            MAX_VALUE = min_depth_l2[~bg_mask].flatten().max()
+            norm_depth_sigmas = torch.zeros_like(min_depth_l2)
+            norm_depth_sigmas[~bg_mask] = (min_depth_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
 
             # rgb uncertainty
-            vir2rd_pred_sum = vir2rd_pred_imgs.sum(0).mean(0, keepdim=True)
-            rendering_ = pred_img.mean(0, keepdim=True)
-            vir2rd_pred = torch.zeros_like(rendering_)
-            vir2rd_pred[valid_mask] = vir2rd_pred_sum[valid_mask] / numels[valid_mask]
-            rgb_l2 = (rendering_ - vir2rd_pred) ** 2
-            MIN_VALUE = rgb_l2[valid_mask].flatten().min()
-            MAX_VALUE = rgb_l2[valid_mask].flatten().max()
-            norm_rgb_sigmas = torch.ones_like(rgb_l2)
-            norm_rgb_sigmas[valid_mask] = (rgb_l2[valid_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+            rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
+            min_rgb_l2 = rgb_l2.min(0).values.suqeeze()
+            MIN_VALUE = min_rgb_l2[~bg_mask].flatten().min()
+            MAX_VALUE = min_rgb_l2[~bg_mask].flatten().max()
+            norm_rgb_sigmas = torch.zeros_like(min_rgb_l2)
+            norm_rgb_sigmas[~bg_mask] = (min_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
 
-            vc_score = norm_rgb_sigmas.squeeze(0) + norm_depth_sigmas.squeeze(0)
+            vc_score = norm_rgb_sigmas + norm_depth_sigmas
             vcurf_scores.append(vc_score.mean().item())
 
         vcurf_scores = np.array(vcurf_scores)

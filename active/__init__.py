@@ -1,4 +1,4 @@
-from .rand_selector import RandSelector, FarthestPointSelector
+from .rand_selector import RandSelector
 from .H_reg import HRegSelector
 from .VC_sel import VCSelector
 from .Farthest_sel import FarthestPointSelector
