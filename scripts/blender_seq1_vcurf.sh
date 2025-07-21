@@ -3,7 +3,7 @@ export CUDA_VISIBLE_DEVICES=0
 DATASET_PATH=/mnt/Data2/nerf_datasets/nerf_synthetic/
 EXP_PATH=./output/nerf_synthetic
 
-scenes=(ship chair lego drums)
+scenes=(ship chair lego drums hotdog ficus materials mic)
 
 for OBJ in ${scenes[@]}
 do

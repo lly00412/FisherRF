@@ -34,7 +34,7 @@ class VCSelector(torch.nn.Module):
         candidate_cameras = scene.getCandidateCameras()
         # TODO: To be change latter
         vcurf_scores = []
-        for idx, cam in enumerate(tqdm(candidate_cameras, desc="Calculating Variance on candidate views")):
+        for idx, cam in enumerate(tqdm(candidate_cameras, desc="Calculating Virtual Camera Uncertainty on candidate views")):
             if exit_func():
                 raise RuntimeError("csm should exit early")
 

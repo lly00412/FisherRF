@@ -359,7 +359,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_every_image", action="store_true", help="log every images during traing")
     parser.add_argument("--override_idxs", default=None, type=str, help="speical test idxs on uncertainty evaluation")
     parser.add_argument("--train_idxs", default=None, type=str, help="speical train idxs on fewshot training")
-    parser.add_argument("--n_inits", default=10, type=int, help="num of view for initialization")
+    parser.add_argument("--n_inits", default=4, type=int, help="num of view for initialization")
     parser.add_argument("--n_emsemble", default=None, type=int, help="num of view for emsembling training")
     parser.add_argument("--n_vcam", default=6, type=int, help="num of view for virtual camera training")
     parser.add_argument("--r_scale", default=0.1, type=float, help="radius of sampling virtual camera")
