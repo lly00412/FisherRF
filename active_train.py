@@ -16,6 +16,7 @@ from utils.loss_utils import ssim
 from lpipsPyTorch import lpips, lpips_func
 from active import methods_dict
 import wandb
+import datetime
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -344,6 +345,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument('--run_time', type=str, default=None, help="Shared timestamp for all runs in the batch")
     # Flags for view selections
     parser.add_argument("--method", type=str, default="rand")
     parser.add_argument("--schema", type=str, default="all")
@@ -376,8 +378,18 @@ if __name__ == "__main__":
         args.start_checkpoint = args.model_path + "/last.pth"
 
     print("Optimizing " + args.model_path)
+    run_time = args.run_time or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    scene_name = os.path.basename(args.model_path)
+    run_id = os.path.basename(args.model_path.rstrip('/')) + "_" + run_time + "_" + scene_name
+    project_name = f"{args.method}/{run_time}/{scene_name}"
 
-    wandb.init(project='active', resume="allow", id=os.path.split(args.model_path.rstrip('/'))[-1], config=vars(args))
+    wandb.init(
+        project='active',
+        name=project_name,
+        resume="allow",
+        id=run_id,
+        config=vars(args)
+    )
 
     # Initialize system state (RNG)
     safe_state(args.quiet, seed=args.seed)
