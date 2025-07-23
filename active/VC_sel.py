@@ -112,9 +112,9 @@ class VCSelector(torch.nn.Module):
             norm_rgb_sigmas[~bg_mask] = (avg_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
 
             vc_scores = norm_rgb_sigmas + norm_depth_sigmas
-            non_bg_pixels = (~bg_mask).float().sum()
+            bg_pixels = bg_mask.float().sum()
             total_pixels = bg_mask.numel()
-            weight = non_bg_pixels / total_pixels
+            weight = bg_pixels / total_pixels
             vcurf_scores.append((vc_scores[~bg_mask].mean() * weight).item())
 
         vcurf_scores = np.array(vcurf_scores)
