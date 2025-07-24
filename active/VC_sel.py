@@ -82,8 +82,9 @@ class VCSelector(torch.nn.Module):
             ###############################
             #  fillter out backgroud pixels and occlusion mask
             ###############################
-            bg_mask_per_channel = (pred_img == background.view(3, 1, 1))
-            bg_mask = bg_mask_per_channel.all(dim=0)
+            # bg_mask_per_channel = (pred_img == background.view(3, 1, 1))
+            # bg_mask = bg_mask_per_channel.all(dim=0)
+            bg_mask = (depth.squeeze() > 0)
             _, h,w = pred_img.shape
 
             numels = float(self.n_vcam) - nv_mask.sum(0)
