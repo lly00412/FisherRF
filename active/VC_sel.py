@@ -24,17 +24,16 @@ class VCSelector(torch.nn.Module):
         self.seed = args.seed
         self.n_vcam = args.n_vcam
         self.scale =  args.r_scale
-    
+
     @torch.no_grad()
     def nbvs(self, gaussians, scene: Scene, num_views, pipe, background, exit_func) -> List[int]:
         candidate_views = list(deepcopy(scene.get_candidate_set()))
 
-        # off load to cpu to avoid oom with greedy algo
-        # device = params[0].device if num_views == 1 else "cpu"
-        device = "cpu" # we have to load to cpu because of inflation
         candidate_cameras = scene.getCandidateCameras()
         # TODO: To be change latter
-        vcurf_scores = []
+        depth_scores = []
+        color_scores = []
+        occ_scores = []
         for idx, cam in enumerate(tqdm(candidate_cameras, desc="Calculating Virtual Camera Uncertainty on candidate views")):
             if exit_func():
                 raise RuntimeError("csm should exit early")
@@ -97,28 +96,44 @@ class VCSelector(torch.nn.Module):
             depth_l2 = (vir2rd_depths - rd_depths) **2
             avg_depth_l2 = torch.squeeze(depth_l2.sum(0) / numels)
 
-            # min_depth_l2 = depth_l2.min(0).values.squeeze()
-
-            MIN_VALUE = avg_depth_l2[~bg_mask].flatten().min()
-            MAX_VALUE = avg_depth_l2[~bg_mask].flatten().max()
-            norm_depth_sigmas = torch.zeros_like(avg_depth_l2)
-            norm_depth_sigmas[~bg_mask] = (avg_depth_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+            # MIN_VALUE = avg_depth_l2[~bg_mask].flatten().min()
+            # MAX_VALUE = avg_depth_l2[~bg_mask].flatten().max()
+            # depth_sigmas = torch.zeros_like(avg_depth_l2)
+            depth_scores.append(avg_depth_l2[~bg_mask].mean().item())
 
             # rgb uncertainty
             rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
             avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
-            MIN_VALUE = avg_rgb_l2[~bg_mask].flatten().min()
-            MAX_VALUE = avg_rgb_l2[~bg_mask].flatten().max()
-            norm_rgb_sigmas = torch.zeros_like(avg_rgb_l2)
-            norm_rgb_sigmas[~bg_mask] = (avg_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+            color_scores.append(avg_rgb_l2[~bg_mask].mean().item())
 
-            vc_scores = norm_rgb_sigmas + norm_depth_sigmas
+            # MIN_VALUE = avg_rgb_l2[~bg_mask].flatten().min()
+            # MAX_VALUE = avg_rgb_l2[~bg_mask].flatten().max()
+            # norm_rgb_sigmas = torch.zeros_like(avg_rgb_l2)
+            # norm_rgb_sigmas[~bg_mask] = (avg_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+
+            # vc_scores = norm_rgb_sigmas + norm_depth_sigmas
             bg_pixels = bg_mask.float().sum()
             total_pixels = bg_mask.numel()
-            weight = bg_pixels / total_pixels
-            vcurf_scores.append((vc_scores[~bg_mask].mean() * weight).item())
+            occ_pixels = nv_mask.sum()-self.n_vcam*bg_pixels
+            occ_weight = (bg_pixels+occ_pixels) / total_pixels
+            occ_scores.append(occ_weight.item())
+            # vcurf_scores.append((vc_scores[~bg_mask].mean() * weight).item())
+            # del norm_rgb_sigmas, norm_depth_sigmas, bg_mask
+            del avg_depth_l2, avg_rgb_l2, bg_mask
 
-        vcurf_scores = np.array(vcurf_scores)
+        # vcurf_scores = np.array(vcurf_scores)
+        depth_scores = np.array(depth_scores)
+        exp_depth_scores = np.exp(depth_scores - np.max(depth_scores))  # for numerical stability
+        softmax_depth_scores = exp_depth_scores / np.sum(exp_depth_scores)
+
+        color_scores = np.array(color_scores)
+        exp_color_scores = np.exp(color_scores - np.max(color_scores))  # for numerical stability
+        softmax_color_scores = exp_color_scores / np.sum(exp_color_scores)
+
+        occ_scores = np.array(occ_scores)
+
+        vcurf_scores = softmax_depth_scores*softmax_color_scores*occ_scores
+
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]
         return selected_view_idx
