@@ -87,52 +87,64 @@ class VCSelector(torch.nn.Module):
             _, h,w = pred_img.shape
 
             numels = float(self.n_vcam) - nv_mask.sum(0)
-            numels[numels==0] == 1.0
+            numels[numels==0] = 1.0
 
             ###############################
             #  compute uncertainty by l2 diff
             ################################
-            # depth uncertainty -- if find the avg
-            depth_l2 = (vir2rd_depths - rd_depths) **2
-            avg_depth_l2 = torch.squeeze(depth_l2.sum(0) / numels)
+            if bg_mask.float().sum()<(h*w):  # something can be rendered
+                # depth uncertainty -- if find the avg
+                depth_l2 = (vir2rd_depths - rd_depths) **2
+                avg_depth_l2 = torch.squeeze(depth_l2.sum(0) / numels)
 
-            # MIN_VALUE = avg_depth_l2[~bg_mask].flatten().min()
-            # MAX_VALUE = avg_depth_l2[~bg_mask].flatten().max()
-            # depth_sigmas = torch.zeros_like(avg_depth_l2)
-            depth_scores.append(avg_depth_l2[~bg_mask].mean().item())
+                # MIN_VALUE = avg_depth_l2[~bg_mask].flatten().min()
+                # MAX_VALUE = avg_depth_l2[~bg_mask].flatten().max()
+                # depth_sigmas = torch.zeros_like(avg_depth_l2)
+                depth_scores.append(avg_depth_l2[~bg_mask].mean().item())
 
-            # rgb uncertainty
-            rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
-            avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
-            color_scores.append(avg_rgb_l2[~bg_mask].mean().item())
+                # rgb uncertainty
+                rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
+                avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
+                color_scores.append(avg_rgb_l2[~bg_mask].mean().item())
 
-            # MIN_VALUE = avg_rgb_l2[~bg_mask].flatten().min()
-            # MAX_VALUE = avg_rgb_l2[~bg_mask].flatten().max()
-            # norm_rgb_sigmas = torch.zeros_like(avg_rgb_l2)
-            # norm_rgb_sigmas[~bg_mask] = (avg_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
+                # MIN_VALUE = avg_rgb_l2[~bg_mask].flatten().min()
+                # MAX_VALUE = avg_rgb_l2[~bg_mask].flatten().max()
+                # norm_rgb_sigmas = torch.zeros_like(avg_rgb_l2)
+                # norm_rgb_sigmas[~bg_mask] = (avg_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
 
-            # vc_scores = norm_rgb_sigmas + norm_depth_sigmas
-            bg_pixels = bg_mask.float().sum()
-            total_pixels = bg_mask.numel()
-            occ_pixels = nv_mask.sum()-self.n_vcam*bg_pixels
-            occ_weight = (bg_pixels+occ_pixels) / total_pixels
-            occ_scores.append(occ_weight.item())
-            # vcurf_scores.append((vc_scores[~bg_mask].mean() * weight).item())
-            # del norm_rgb_sigmas, norm_depth_sigmas, bg_mask
-            del avg_depth_l2, avg_rgb_l2, bg_mask
+                # vc_scores = norm_rgb_sigmas + norm_depth_sigmas
+                bg_pixels = bg_mask.float().sum()
+                total_pixels = bg_mask.numel()
+                occ_pixels = nv_mask.sum() - self.n_vcam*bg_pixels
+                occ_weight = (occ_pixels +bg_pixels) / total_pixels
+                occ_scores.append(occ_weight.item())
+                # vcurf_scores.append((vc_scores[~bg_mask].mean() * weight).item())
+                # del norm_rgb_sigmas, norm_depth_sigmas, bg_mask
+                del avg_depth_l2, avg_rgb_l2, bg_mask
+            else:
+                depth_scores.append(-1.0)
+                color_scores.append(-1.0)
+                occ_scores.append(2.0)
 
         # vcurf_scores = np.array(vcurf_scores)
+        occ_scores = np.array(occ_scores)
+        v_mask = (occ_scores < 2.0)
+
         depth_scores = np.array(depth_scores)
-        exp_depth_scores = np.exp(depth_scores - np.max(depth_scores))  # for numerical stability
+        v_depth = depth_scores[v_mask]
+        exp_depth_scores = np.exp(v_depth - np.max(v_depth))  # for numerical stability
         softmax_depth_scores = exp_depth_scores / np.sum(exp_depth_scores)
+        v_depth_scores = np.ones_like(occ_scores)
+        v_depth_scores[v_mask] = softmax_depth_scores
 
         color_scores = np.array(color_scores)
-        exp_color_scores = np.exp(color_scores - np.max(color_scores))  # for numerical stability
+        v_color = color_scores[v_mask]
+        exp_color_scores = np.exp(v_color - np.max(v_color))  # for numerical stability
         softmax_color_scores = exp_color_scores / np.sum(exp_color_scores)
+        v_color_scores = np.ones_like(occ_scores)
+        v_color_scores[v_mask] = softmax_color_scores
 
-        occ_scores = np.array(occ_scores)
-
-        vcurf_scores = softmax_depth_scores*softmax_color_scores*occ_scores
+        vcurf_scores = occ_scores*v_depth_scores*v_color_scores
 
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]
