@@ -94,17 +94,17 @@ class VCSelector(torch.nn.Module):
             ################################
             if bg_mask.float().sum()<(h*w):  # something can be rendered
                 # weight scores
-                uncert_weight = nv_mask.sum(0)+1.0/(self.n_vcam+1.0)
+                confs = 1.0 - nv_mask.sum(0)+1.0/(self.n_vcam+1.0)
 
                 depth_l2 = (vir2rd_depths - rd_depths) **2
                 avg_depth_l2 = torch.squeeze(depth_l2.sum(0) / numels)
-                weight_depth_l2 = avg_depth_l2*uncert_weight.squeeze()
+                weight_depth_l2 = avg_depth_l2*confs.squeeze()
                 depth_scores.append(weight_depth_l2[~bg_mask].mean().item())
 
                 # rgb uncertainty
                 rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
                 avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
-                weight_rgb_l2 = avg_rgb_l2 * uncert_weight.squeeze()
+                weight_rgb_l2 = avg_rgb_l2 * confs.squeeze()
                 color_scores.append(weight_rgb_l2[~bg_mask].mean().item())
 
                 # count vaild pixels
