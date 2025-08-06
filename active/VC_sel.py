@@ -93,29 +93,21 @@ class VCSelector(torch.nn.Module):
             #  compute uncertainty by l2 diff
             ################################
             if bg_mask.float().sum()<(h*w):  # something can be rendered
-                # depth uncertainty -- if find the avg
+                # weight scores
+                uncert_weight = nv_mask.sum(0)+1.0/(self.n_vcam+1.0)
+
                 depth_l2 = (vir2rd_depths - rd_depths) **2
                 avg_depth_l2 = torch.squeeze(depth_l2.sum(0) / numels)
-
-                # MIN_VALUE = avg_depth_l2[~bg_mask].flatten().min()
-                # MAX_VALUE = avg_depth_l2[~bg_mask].flatten().max()
-                # depth_sigmas = torch.zeros_like(avg_depth_l2)
-                depth_scores.append(avg_depth_l2[~bg_mask].mean().item())
+                weight_depth_l2 = avg_depth_l2*uncert_weight.squeeze()
+                depth_scores.append(weight_depth_l2[~bg_mask].mean().item())
 
                 # rgb uncertainty
                 rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
                 avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
-                color_scores.append(avg_rgb_l2[~bg_mask].mean().item())
+                weight_rgb_l2 = avg_rgb_l2 * uncert_weight.squeeze()
+                color_scores.append(weight_rgb_l2[~bg_mask].mean().item())
 
-                # MIN_VALUE = avg_rgb_l2[~bg_mask].flatten().min()
-                # MAX_VALUE = avg_rgb_l2[~bg_mask].flatten().max()
-                # norm_rgb_sigmas = torch.zeros_like(avg_rgb_l2)
-                # norm_rgb_sigmas[~bg_mask] = (avg_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
-
-                # vc_scores = norm_rgb_sigmas + norm_depth_sigmas
-                # bg_pixels = bg_mask.float()
-                # occ_pixels = nv_mask.sum() - self.n_vcam * bg_pixels
-                # occ_weight = (occ_pixels + bg_pixels) / total_pixels
+                # count vaild pixels
                 nv_pixels = nv_mask.sum(0).squeeze()+bg_mask.float()
                 occ_mask = (nv_pixels > 0)
                 total_pixels = bg_mask.numel()
@@ -125,8 +117,8 @@ class VCSelector(torch.nn.Module):
                 # del norm_rgb_sigmas, norm_depth_sigmas, bg_mask
                 del avg_depth_l2, avg_rgb_l2, bg_mask
             else:
-                depth_scores.append(-1.0)
-                color_scores.append(-1.0)
+                depth_scores.append(1.0)
+                color_scores.append(1.0)
                 occ_scores.append(1.0)
 
         # vcurf_scores = np.array(vcurf_scores)

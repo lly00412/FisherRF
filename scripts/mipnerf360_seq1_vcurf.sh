@@ -19,6 +19,6 @@ do
     echo python active_train.py -s ${SCENE_PATH} -m ${MODEL_PATH} --eval --method=vcurf --seed=0 --schema v20seq1_inplace --iterations 20000 --run_time ${RUN_TIME}
 
     python active_train.py -s ${SCENE_PATH} -m ${MODEL_PATH} --eval --method=vcurf --seed=0 --schema v20seq1_inplace \
-           --iterations 20000 --n_vcam=6 --r_scale=0.3 --run_time ${RUN_TIME}
+           --iterations 20000 --n_vcam=10 --r_scale=0.1 --run_time ${RUN_TIME}
 
 done
