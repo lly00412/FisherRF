@@ -113,10 +113,13 @@ class VCSelector(torch.nn.Module):
                 # norm_rgb_sigmas[~bg_mask] = (avg_rgb_l2[~bg_mask] - MIN_VALUE) / (MAX_VALUE - MIN_VALUE)
 
                 # vc_scores = norm_rgb_sigmas + norm_depth_sigmas
-                bg_pixels = bg_mask.float().sum()
+                # bg_pixels = bg_mask.float()
+                # occ_pixels = nv_mask.sum() - self.n_vcam * bg_pixels
+                # occ_weight = (occ_pixels + bg_pixels) / total_pixels
+                nv_pixels = nv_mask.sum(0).squeeze()+bg_mask.float()
+                occ_mask = (nv_pixels > 0)
                 total_pixels = bg_mask.numel()
-                occ_pixels = nv_mask.sum() - self.n_vcam*bg_pixels
-                occ_weight = (occ_pixels +bg_pixels) / total_pixels
+                occ_weight = occ_mask.float().sum() /total_pixels
                 occ_scores.append(occ_weight.item())
                 # vcurf_scores.append((vc_scores[~bg_mask].mean() * weight).item())
                 # del norm_rgb_sigmas, norm_depth_sigmas, bg_mask
@@ -124,11 +127,11 @@ class VCSelector(torch.nn.Module):
             else:
                 depth_scores.append(-1.0)
                 color_scores.append(-1.0)
-                occ_scores.append(2.0)
+                occ_scores.append(1.0)
 
         # vcurf_scores = np.array(vcurf_scores)
         occ_scores = np.array(occ_scores)
-        v_mask = (occ_scores < 2.0)
+        v_mask = (occ_scores < 1.0)
 
         depth_scores = np.array(depth_scores)
         v_depth = depth_scores[v_mask]
