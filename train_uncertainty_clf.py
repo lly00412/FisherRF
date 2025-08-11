@@ -108,6 +108,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
+    ### TODO: pack the candidate views and train the binary classifier.
+
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -324,6 +326,58 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
             wandb.log({'total_points': scene.gaussians.get_xyz.shape[0]}, step=iteration)
         torch.cuda.empty_cache()
+
+def training_metrics(iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, before_selection=False, log_every_image=False):
+    # Report test and samples of training set
+    if iteration in testing_iterations or before_selection:
+        print(f"Running evaluation for iteration: {iteration}")
+        torch.cuda.empty_cache()
+        lpips = lpips_func("cuda", net_type='vgg')
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()},
+                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+
+        for config in validation_configs:
+            if config['cameras'] and len(config['cameras']) > 0:
+                l1_test = 0.0
+                psnr_test = 0.0
+                ssim_test = 0.0
+                lpips_test = 0.0
+
+                log_images = {}
+                for idx, viewpoint in enumerate(config['cameras']):
+                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    l1_test += l1_loss(image, gt_image).mean().double()
+                    psnr_test += psnr(image, gt_image).mean().double()
+                    ssim_test += ssim(image, gt_image).mean().double()
+                    lpips.to(image.device)
+                    lpips_test += lpips(image, gt_image).mean().double()
+
+                if log_every_image:
+                    wandb.log(log_images, step=iteration)
+
+                psnr_test /= len(config['cameras'])
+                l1_test /= len(config['cameras'])
+                ssim_test /= len(config['cameras'])
+                lpips_test /= len(config['cameras'])
+
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {} SSIM {} LPIPS {}".format(iteration, config['name'], l1_test, psnr_test, ssim_test, lpips_test))
+                if tb_writer:
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - ssim', ssim_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - lpips', lpips_test, iteration)
+                log_dict = {config['name'] + '/l1_loss': l1_test, config['name'] + '/psnr': psnr_test,
+                            config['name'] + '/ssim': ssim_test, config['name'] + '/lpips': lpips_test,}
+                wandb.log(log_dict, step=iteration)
+
+        if tb_writer:
+            tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
+            tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+            wandb.log({'total_points': scene.gaussians.get_xyz.shape[0]}, step=iteration)
+        torch.cuda.empty_cache()
+
+
 
 import socket
 from contextlib import closing
