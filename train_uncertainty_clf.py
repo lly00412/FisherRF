@@ -107,7 +107,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
-    for iteration in range(first_iter, opt.iterations + 1):        
+
+    for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
         while network_gui.conn != None:
@@ -134,7 +135,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 scene.candidate_views_filter = candidate_views_filter
                 
                 # Because selection is time consumeing
-                selected_views = active_method.nbvs(gaussians, scene, num_views, pipe, background, exit_func=csm.should_exit)
+                candidated_views, candidated_moments = active_method.cvs(gaussians, scene, num_views, pipe, background,
+                                                    exit_func=csm.should_exit)
+                # selected_views = active_method.nbvs(gaussians, scene, num_views, pipe, background,
+                #                                     exit_func=csm.should_exit)
             except RuntimeError as e:
                 print(e)
                 print("selector exited early")
