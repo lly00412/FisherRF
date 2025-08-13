@@ -511,7 +511,11 @@ def report_metrics(iteration, scene : Scene, renderFunc, renderArgs):
     print(f"Running evaluation for iteration: {iteration}")
     torch.cuda.empty_cache()
     # lpips = lpips_func("cuda", net_type='vgg')
-    validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()})
+    validation_configs = (
+                          {'name': 'train',
+                           'cameras': [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in
+                                       range(5, 30, 5)]},
+                          {'name': 'test', 'cameras': scene.getTestCameras()},)
 
     psnr_test = 0.0
     for config in validation_configs:
