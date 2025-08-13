@@ -181,9 +181,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             base_train_idxs = scene.train_idxs
             best_psnr = 0.
             best_views = 0
-            for selected_views in candidated_views:
-                print(f"ITER {iteration}: selected views: {selected_views}")
-                scene.train_idxs = base_train_idxs.extend(selected_views)
+            for selected_view in candidated_views:
+                print(f"ITER {iteration}: selected views: {selected_view}")
+                scene.train_idxs = base_train_idxs.extend(selected_view)
                 print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
 
                 gaussians.optimizer.zero_grad(set_to_none = True)
@@ -193,7 +193,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 first_iter, _ = load_checkpoint(save_ckpt_path, gaussians, scene, opt, ignore_train_idxs=True)
                 base_iter = iteration - 1
 
-                interval_iters = len(scene.train_idxs) * 100
+                num_train = len(scene.train_idxs)
+                interval_iters = num_train * 100
                 for j in range(interval_iters):
                     # Render
                     current_iteration = iteration + j
@@ -257,11 +258,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 with torch.no_grad():
                     psnr_test = report_metrics(iteration+interval_iters, scene, render, (pipe, background))
+
+                    df = pd.read_csv(csv_path)
+                    mask = (df["id"] == int(selected_view)) & (df["num_train"] == int(num_train-1))
+                    if mask.any():
+                        df.loc[mask, "psnr"] = float(psnr_test)
+                    else:
+                        print(f"No row found for (id={selected_view}, num_train={num_train-1}). ")
+                        new_row = {
+                            "id": int(selected_view),
+                            "d_mean": pd.NA, "d_var": pd.NA, "d_skewness": pd.NA, "d_kurtosis": pd.NA,
+                            "c_mean": pd.NA, "c_var": pd.NA, "c_skewness": pd.NA, "c_kurtosis": pd.NA,
+                            "num_train": int(num_train-1),
+                            "psnr": float(psnr),
+                        }
+                        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                    df.to_csv(csv_path, index=False)
+
                     if psnr_test > best_psnr:
                         best_psnr = psnr_test
-                        best_views = candidated_views
-
-
+                        best_views = selected_view
 
                 # We save before logging
                 if csm.should_exit():
@@ -306,23 +322,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             gaussians.reset_opacity()
 
                     # Optimizer step
-                    if iteration < opt.iterations:
+                    if current_iteration < opt.iterations:
                         gaussians.optimizer.step()
                         gaussians.optimizer.zero_grad(set_to_none=True)
 
+            gaussians.optimizer.zero_grad(set_to_none=True)
+            first_iter, _ = load_checkpoint(save_ckpt_path, gaussians, scene, opt, ignore_train_idxs=True)
+            base_iter = iteration - 1
 
-
-                if (iteration in checkpoint_iterations):
-                    save_checkpoint(gaussians, iteration, scene)
+            selected_views = best_views
+            print(f"ITER {iteration}: selected views: {selected_views}")
+            scene.train_idxs = base_train_idxs.extend(selected_views)
+            print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
 
         # TODO: restart here for next best view
-        print(f"ITER {iteration}: selected views: {selected_views}")
-        scene.train_idxs = base_train_idxs.extend(selected_views)
-        print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
-
-
-
         iter_start.record()
+
+        gaussians.update_learning_rate(iteration - base_iter)
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -501,7 +517,7 @@ def report_metrics(iteration, scene : Scene, renderFunc, renderArgs):
 
             print("\n[ITER {}] Evaluating {}: PSNR {}".format(iteration, config['name'], psnr_test))
     torch.cuda.empty_cache()
-    return psnr_test
+    return psnr_test.item()
 
 
 
