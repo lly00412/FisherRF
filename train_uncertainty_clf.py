@@ -256,6 +256,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             gaussians.optimizer.zero_grad(set_to_none=True)
 
                 with torch.no_grad():
+                    psnr_test = report_metrics(iteration+interval_iters, scene, render, (pipe, background))
+                    if psnr_test > best_psnr:
+                        best_psnr = psnr_test
+                        best_views = candidated_views
 
 
 
@@ -310,6 +314,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 if (iteration in checkpoint_iterations):
                     save_checkpoint(gaussians, iteration, scene)
+
+        # TODO: restart here for next best view
+        print(f"ITER {iteration}: selected views: {selected_views}")
+        scene.train_idxs = base_train_idxs.extend(selected_views)
+        print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
 
 
 
@@ -472,7 +481,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             wandb.log({'total_points': scene.gaussians.get_xyz.shape[0]}, step=iteration)
         torch.cuda.empty_cache()
 
-def report_metrics(iteration,l1_loss, scene : Scene, renderFunc, renderArgs, log_every_image=False):
+def report_metrics(iteration, scene : Scene, renderFunc, renderArgs):
     # Report test and samples of training set
     print(f"Running evaluation for iteration: {iteration}")
     torch.cuda.empty_cache()
