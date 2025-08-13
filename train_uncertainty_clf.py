@@ -145,8 +145,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if num_views > 0:
             N_trains = len(scene.train_idxs)
             save_ckpt_path = f"{args.model_path}/{N_trains}_views/best.ckpt"
+            os.makedirs(f"{args.model_path}/{N_trains}_views/",exist_ok=True)
             save_checkpoint(gaussians, iteration, scene, base_iter, save_path=save_ckpt_path, save_last=False)
-
 
             try:
                 # For sectioned training
@@ -176,14 +176,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 save_checkpoint(gaussians, iteration - 1, scene)
                 csm.requeue()
 
-
             print(f"ITER {iteration}: candidiate views: {candidated_views}")
-            base_train_idxs = scene.train_idxs
+            base_train_idxs = scene.train_idxs.copy()
             best_psnr = 0.
             best_views = 0
             for selected_view in candidated_views:
                 print(f"ITER {iteration}: selected views: {selected_view}")
-                scene.train_idxs = base_train_idxs.extend(selected_view)
+                scene.train_idxs = base_train_idxs.copy()
+                scene.train_idxs.extend([selected_view])
                 print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
 
                 gaussians.optimizer.zero_grad(set_to_none = True)
@@ -202,7 +202,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     if current_iteration > args.sh_up_after and current_iteration % args.sh_up_every == 0:
                         gaussians.oneupSHdegree()
 
-                        # Pick a random Camera
+                    # Pick a random Camera
                     if not viewpoint_stack:
                         viewpoint_stack = scene.getTrainCameras().copy()
                     viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
@@ -270,7 +270,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             "d_mean": pd.NA, "d_var": pd.NA, "d_skewness": pd.NA, "d_kurtosis": pd.NA,
                             "c_mean": pd.NA, "c_var": pd.NA, "c_skewness": pd.NA, "c_kurtosis": pd.NA,
                             "num_train": int(num_train-1),
-                            "psnr": float(psnr),
+                            "psnr": float(psnr_test),
                         }
                         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                     df.to_csv(csv_path, index=False)
@@ -332,13 +332,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             selected_views = best_views
             print(f"ITER {iteration}: selected views: {selected_views}")
-            scene.train_idxs = base_train_idxs.extend(selected_views)
+            scene.train_idxs = base_train_idxs.copy()
+            scene.train_idxs.extend([selected_views])
             print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
 
         # TODO: restart here for next best view
         iter_start.record()
 
         gaussians.update_learning_rate(iteration - base_iter)
+
+        if iteration > args.sh_up_after and iteration % args.sh_up_every == 0:
+            gaussians.oneupSHdegree()
+
+        # Pick a random Camera
+        if not viewpoint_stack:
+            viewpoint_stack = scene.getTrainCameras().copy()
+        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -502,8 +511,7 @@ def report_metrics(iteration, scene : Scene, renderFunc, renderArgs):
     print(f"Running evaluation for iteration: {iteration}")
     torch.cuda.empty_cache()
     # lpips = lpips_func("cuda", net_type='vgg')
-    validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()},
-                          {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+    validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()})
 
     psnr_test = 0.0
     for config in validation_configs:
@@ -597,7 +605,6 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     args.port = find_free_port()
     print(f"GUI at: {args.ip}:{args.port}")
-
 
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
