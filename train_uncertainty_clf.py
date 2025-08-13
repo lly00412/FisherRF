@@ -24,6 +24,8 @@ except ImportError:
     TENSORBOARD_FOUND = False
 from utils.cluster_manager import ClusterStateManager
 
+import pandas as pd
+
 csm = ClusterStateManager()
 
 @torch.no_grad()
@@ -107,8 +109,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    csv_path = f"{args.model_path}/candidates.csv"
 
-    ### TODO: pack the candidate views and train the binary classifier.
+    cols = [
+        "id",
+        "d_mean", "d_var", "d_skewness", "d_kurtosis",
+        "c_mean", "c_var", "c_skewness", "c_kurtosis",
+        "num_train", "psnr"
+    ]
+    df = pd.DataFrame(columns=cols)
+    df.to_csv(csv_path, index=False)
+
+    ### TODO: from here to start record CSV file
 
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
@@ -131,6 +143,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         num_views = schema.num_views_to_add(iteration)
         if num_views > 0:
+            N_trains = len(scene.train_idxs)
+            save_ckpt_path = f"{args.model_path}/{N_trains}_views/best.ckpt"
+            save_checkpoint(gaussians, iteration, scene, base_iter, save_path=save_ckpt_path, save_last=False)
+
+
             try:
                 # For sectioned training
                 candidate_views_filter = getattr(schema, "candidate_views_filter")[iteration] if hasattr(schema, "candidate_views_filter") else None
@@ -139,8 +156,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 # Because selection is time consumeing
                 candidated_views, candidated_moments = active_method.cvs(gaussians, scene, num_views, pipe, background,
                                                     exit_func=csm.should_exit)
-                # selected_views = active_method.nbvs(gaussians, scene, num_views, pipe, background,
-                #                                     exit_func=csm.should_exit)
+
+                candidated_moments = candidated_moments.detach().cpu().numpy()
+                df_new = pd.DataFrame({
+                    "id": candidated_views,
+                    "d_mean": candidated_moments[:, 0], "d_var": candidated_moments[:, 1], "d_skewness": candidated_moments[:, 2],
+                    "d_kurtosis": candidated_moments[:, 3],
+                    "c_mean": candidated_moments[:, 4], "c_var": candidated_moments[:, 5], "c_skewness": candidated_moments[:, 6],
+                    "c_kurtosis": candidated_moments[:, 7],
+                    "num_train": len(scene.train_idxs),
+                    "psnr": pd.NA
+                })
+                df_new.to_csv(csv_path, mode="a", header=False, index=False)
+
             except RuntimeError as e:
                 print(e)
                 print("selector exited early")
@@ -148,27 +176,39 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 save_checkpoint(gaussians, iteration - 1, scene)
                 csm.requeue()
 
-            print(f"ITER {iteration}: selected views: {selected_views}")
-            scene.train_idxs.extend(selected_views)
-            print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
 
-            gaussians.optimizer.zero_grad(set_to_none = True)
+            print(f"ITER {iteration}: candidiate views: {candidated_views}")
+            base_train_idxs = scene.train_idxs
+            for selected_views in candidated_views:
+                print(f"ITER {iteration}: selected views: {selected_views}")
+                scene.train_idxs = base_train_idxs.extend(selected_views)
+                print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
 
-            first_iter, _ = load_checkpoint(init_ckpt_path, gaussians, scene, opt, ignore_train_idxs=True)
-            base_iter = iteration - 1
+                gaussians.optimizer.zero_grad(set_to_none = True)
+
+
+                # TODO: from here, I want to train GS with different candidated views
+
+                first_iter, _ = load_checkpoint(save_ckpt_path, gaussians, scene, opt, ignore_train_idxs=True)
+                base_iter = iteration - 1
+
+                gaussians.update_learning_rate(iteration - base_iter)
+
+                if iteration > args.sh_up_after and iteration % args.sh_up_every == 0:
+                    gaussians.oneupSHdegree()
+
+                # Pick a random Camera
+                if not viewpoint_stack:
+                    viewpoint_stack = scene.getTrainCameras().copy()
+                viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+
+
+                for
+
+
+
 
         iter_start.record()
-
-        gaussians.update_learning_rate(iteration - base_iter)
-
-        if iteration > args.sh_up_after and iteration % args.sh_up_every == 0:
-            gaussians.oneupSHdegree()
-
-        # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
