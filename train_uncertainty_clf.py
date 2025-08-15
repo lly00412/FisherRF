@@ -82,6 +82,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                                       num_inits=args.n_inits,
                                       n_emsemble = n_emsemble,
                                       emsemble_seed = args.emsemble_seed,
+                                      seed = args.seed,
                                       )
     print(f"schema: {schema.load_its}")
     scene.train_idxs = schema.init_views

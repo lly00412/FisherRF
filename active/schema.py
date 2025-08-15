@@ -57,13 +57,15 @@ class VNSeqMInplace(BaseSchema):
     Add 1 image at a time
     """
 
-    def __init__(self, dataset_size: int, scene, N: int=20, M: int=1, num_init_views: int=10, interval_epochs=100, **kwargs):
+    def __init__(self, dataset_size: int, scene, N: int=20, M: int=1, num_init_views: int=10, interval_epochs=100, seed=0,**kwargs):
         """
         N: int total views to select
         M: # views to select each time
         """
         super().__init__()
-        self.init_views = [0] 
+        #self.init_views = [0] # random pick one
+        random.seed(seed)
+        self.init_views = [random.randrange(dataset_size)]
 
         self.load_its = {}
         num_init_views_needed = num_init_views - len(self.init_views)
@@ -166,12 +168,14 @@ class VNSeqMReplace(BaseSchema):
 V20Seq1Inplace = partial(VNSeqMInplace, N=20, M=1, num_init_views=4,interval_epochs=100)
 V10Seq1Inplace = partial(VNSeqMInplace, N=10, M=1, num_init_views=4,interval_epochs=100)
 V20Seq4Inplace = partial(VNSeqMInplace, N=20, M=4, num_init_views=4, interval_epochs=300)
+V5Seq1Inplace = partial(VNSeqMInplace, N=5, M=1, num_init_views=4,interval_epochs=100)
 
 AllSeq1Replace = partial(VNSeqMReplace, M=1, num_init_views=4, interval_epochs=100)
 
 
 schema_dict: Dict[str, BaseSchema] = {'all': All, "debug": V20Seq1Debug,
                                       "v20seq1_inplace": V20Seq1Inplace, "v10seq1_inplace": V10Seq1Inplace,
+                                       "v5seq1_inplace": V5Seq1Inplace,
                                       "v20seq4_inplace": V20Seq4Inplace,
                                       "allseq1_inplace":AllSeq1Replace,
                                       }
