@@ -17,58 +17,65 @@ import time
 import warnings; warnings.filterwarnings("ignore")
 import pandas as pd
 import argparse
+import random
 
 def str2float(strlist):
     strlist = strlist[1:-1].split(',')
     return [float(x.strip()) for x in strlist]
-def create_dataset(data_file,test_scene='Drums',target='psnr'):
+def create_dataset(data_file,scene='bicycle',target='psnr',seed=0):
     # read in and create data
     raw_df = pd.read_csv(data_file)
-    test_df = raw_df[raw_df['scene'] == test_scene] # only test on one scene!
-    train_df = raw_df[raw_df['scene'] != test_scene]
+    scene_df = raw_df[raw_df['scene'] == scene]
+    moments = ['d_mean','d_var','d_skewness','d_kurtosis',
+               'c_mean','c_var','c_skewness','c_kurtosis']
 
-    # train dataset
-    x_train = []
-    y_train = []
-    for scene in train_df['scene'].unique():
-        s_df = train_df[train_df['scene'] == scene]
-        n_views = len(s_df)
-        for i in range(n_views):
-            for j in range(n_views):
-                if not i==j:
-                    f1 = str2float(s_df['u_hist'].iloc[i])
-                    f2 = str2float(s_df['u_hist'].iloc[j])
-                    f3 = [a-b for a,b in zip(f1,f2)]
-                    # f4 = s_df['avg_sigma'].iloc[i] - s_df['avg_sigma'].iloc[j]
-                    # f3.append(f4)
-                    label = float(s_df[target].iloc[i]>s_df[target].iloc[j])
-                    # x_train.append([f1,f2,f3])
-                    x_train.append(f3)
-                    y_train.append(label)
+    # dataset
+    x_data = []
+    y_data = []
+    n_views = len(scene_df)
+    for i in range(n_views):
+        for j in range(n_views):
+            if not i==j:
+                f1 = [float(scene_df[key].iloc[i]) for key in moments]
+                f2 = [float(scene_df[key].iloc[j]) for key in moments]
+                diff = [a - b for a, b in zip(f1, f2)]
+                psnr1 = float(scene_df[target].iloc[i])
+                psnr2 = float(scene_df[target].iloc[j])
+                if psnr1>psnr2:
+                    label = [1,0]
+                else:
+                    label = [0,1]
+
+                x_data.append(diff)
+                y_data.append(label)
+
+    # after your loop
+    data = list(zip(x_data, y_data))  # pair them together
+
+    # shuffle in-place
+    random.seed(seed)
+    random.shuffle(data)
+
+    # split back
+    x_data, y_data = zip(*data)
+
+    # now take every 8th as test, rest as train
+    x_train, y_train, x_test, y_test = [], [], [], []
+
+    for idx, (x, y) in enumerate(zip(x_data, y_data)):
+        if idx % 8 == 0:  # every 8th sample → test
+            x_test.append(x)
+            y_test.append(y)
+        else:  # rest → train
+            x_train.append(x)
+            y_train.append(y)
 
     x_train = torch.tensor(x_train,dtype=torch.float32)
-    y_train = torch.tensor(y_train,dtype=torch.float32).unsqueeze(1)
+    y_train = torch.tensor(y_train,dtype=torch.float32)
     train_dataset = TensorDataset(x_train, y_train)
 
-    # test dataset
-    x_test = []
-    y_test = []
-    test_views = len(test_df)
-    for i in range(test_views):
-        for j in range(test_views):
-            if not i == j:
-                f1 = str2float(test_df['u_hist'].iloc[i])
-                f2 = str2float(test_df['u_hist'].iloc[j])
-                f3 = [a - b for a, b in zip(f1, f2)]
-                # f4 = test_df['avg_sigma'].iloc[i] - test_df['avg_sigma'].iloc[j]
-                # f3.append(f4)
-                label = int(test_df[target].iloc[i] > test_df[target].iloc[j])
-                # x_test.append([f1, f2, f3])
-                x_test.append(f3)
-                y_test.append(label)
-
     x_test = torch.tensor(x_test, dtype=torch.float32)
-    y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1)
+    y_test = torch.tensor(y_test, dtype=torch.float32)
     test_dataset = TensorDataset(x_test, y_test)
 
     return train_dataset,test_dataset
@@ -80,30 +87,28 @@ def get_opts():
     # dataset parameters
     parser.add_argument('--data_file', type=str, required=True,
                         help='csv file to create dataset')
-    parser.add_argument('--dataset_name', type=str, default='nerfvs',
-                        choices=['nerfvs', 'nsvfvs', 'llffvs'],
+    parser.add_argument('--dataset_name', type=str, default='m360',
+                        choices=['m360', 'blender'],
                         help='which dataset to train/test')
-    parser.add_argument('--test_scene', type=str, required=True,default='Drums',
-                        choices=['Hotdog','Chair','Ficus','Drums'],
-                        help='test on which scene')
+    parser.add_argument('--scene', type=str, required=True,default='bicycle',
+                        choices=['kitchen','garden','bicycle','counter','bonsai','flowers','room','stump','all'],
+                        help='run on which scene')
     parser.add_argument('--target', type=str, default='psnr',
                         choices=['psnr','ssim','lpips'],
                         help='train the classifier based on which metric')
-    parser.add_argument("--data_seed", type=int, default=34958,
-                        help='random seed to initialize the training set')
 
     # training options
     parser.add_argument('--batch_size', type=int, default=128,
                         help='number of samples in a batch')
-    parser.add_argument('--num_epochs', type=int, default=20,
+    parser.add_argument('--num_epochs', type=int, default=200,
                         help='number of training epochs')
     parser.add_argument('--num_gpus', type=int, default=1,
                         help='number of gpus')
-    parser.add_argument('--lr', type=float, default=1e-2,
+    parser.add_argument('--lr', type=float, default=1e-4,
                         help='learning rate')
 
     # loss options
-    parser.add_argument('--loss', type=str, default='l2',
+    parser.add_argument('--loss', type=str, default='bce',
                         choices=['bce', 'nll'],
                         help='which loss to train')
 
@@ -116,9 +121,8 @@ def get_opts():
                         help='experiment name')
     parser.add_argument('--ckpt_path', type=str, default=None,
                         help='pretrained checkpoint to load (including optimizers, etc)')
-
-    parser.add_argument('--seed', type=int, default=1337,
-                        help='random seed')
+    parser.add_argument("--seed", type=int, default=0,
+                        help='random seed to initialize the training set')
 
     return parser.parse_args()
 
