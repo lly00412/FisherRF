@@ -22,7 +22,7 @@ python binary_classifer_on_view_selection.py \
     --target ${metric} \
     --exp_name ${SCENE}_${timestep}_${metric} \
     --loss ce \
-    --num_epochs 300 --batch_size 128 --lr 1e-3 \
+    --num_epochs 300 --batch_size 128 --lr 1e-4 \
     --seed 0
 
 done
