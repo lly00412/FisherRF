@@ -9,7 +9,8 @@ import pytorch_lightning
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import TQDMProgressBar, ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
+import wandb
 
 from utils import *
 import time
@@ -332,9 +333,18 @@ if __name__ == '__main__':
     callbacks = [ckpt_cb, TQDMProgressBar(refresh_rate=1)]
 
     os.makedirs(os.path.join(f"logs/{hparams.dataset_name}", hparams.exp_name), exist_ok=True)
-    logger = TensorBoardLogger(save_dir=f"logs/{hparams.dataset_name}",
-                               name=hparams.exp_name,
-                               default_hp_metric=False)
+    tb_logger = TensorBoardLogger(
+        save_dir=f"logs/{hparams.dataset_name}",
+        name=hparams.exp_name,
+        default_hp_metric=False
+    )
+
+    wandb_logger = WandbLogger(
+        project=hparams.dataset_name,  # or a custom project name
+        name=hparams.exp_name
+    )
+
+    wandb_logger.experiment.config.update(vars(hparams), allow_val_change=True)
 
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
         strategy = DDPStrategy(find_unused_parameters=False)
@@ -344,7 +354,7 @@ if __name__ == '__main__':
     trainer = Trainer(max_epochs=0 if hparams.val_only else hparams.num_epochs,
                       check_val_every_n_epoch=hparams.num_epochs,
                       callbacks=callbacks,
-                      logger=logger,
+                      logger=[tb_logger, wandb_logger],
                       enable_model_summary=False,
                       accelerator='gpu',
                       devices=hparams.num_gpus,
