@@ -1,15 +1,15 @@
 import torch
 from torch import nn
+import os
 # data
 from torch.utils.data import TensorDataset,DataLoader
 
 # pytorch-lightning
 import pytorch_lightning
-from pytorch_lightning.plugins import DDPPlugin
+from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import TQDMProgressBar, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 from utils import *
 import time
@@ -19,13 +19,52 @@ import pandas as pd
 import argparse
 import random
 
+def all_gather_ddp_if_available(x, cat_dim=0):
+    """
+    Replacement for the removed PL util.
+    - If DDP initialized: all_gather across ranks and cat on `cat_dim`
+    - Else: return x
+    Requires `x` to be a Tensor with same shape on each rank.
+    """
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        world_size = torch.distributed.get_world_size()
+        bufs = [torch.empty_like(x) for _ in range(world_size)]
+        torch.distributed.all_gather(bufs, x.contiguous())
+        return torch.cat(bufs, dim=cat_dim)
+    return x
+
+def extract_model_state_dict(ckpt_path, model_name='model', prefixes_to_ignore=[]):
+    checkpoint = torch.load(ckpt_path, map_location='cpu')
+    checkpoint_ = {}
+    if 'state_dict' in checkpoint: # if it's a pytorch-lightning checkpoint
+        checkpoint = checkpoint['state_dict']
+    for k, v in checkpoint.items():
+        if not k.startswith(model_name):
+            continue
+        k = k[len(model_name)+1:]
+        for prefix in prefixes_to_ignore:
+            if k.startswith(prefix):
+                break
+        else:
+            checkpoint_[k] = v
+    return checkpoint_
+
+
+def load_ckpt(model, ckpt_path, model_name='model', prefixes_to_ignore=[]):
+    if not ckpt_path: return
+    model_dict = model.state_dict()
+    checkpoint_ = extract_model_state_dict(ckpt_path, model_name, prefixes_to_ignore)
+    model_dict.update(checkpoint_)
+    model.load_state_dict(model_dict)
+
 def str2float(strlist):
     strlist = strlist[1:-1].split(',')
     return [float(x.strip()) for x in strlist]
 def create_dataset(data_file,scene='bicycle',target='psnr',seed=0):
     # read in and create data
     raw_df = pd.read_csv(data_file)
-    scene_df = raw_df[raw_df['scene'] == scene]
+    # scene_df = raw_df[raw_df['scene'] == scene]
+    scene_df = raw_df
     moments = ['d_mean','d_var','d_skewness','d_kurtosis',
                'c_mean','c_var','c_skewness','c_kurtosis']
 
@@ -41,12 +80,10 @@ def create_dataset(data_file,scene='bicycle',target='psnr',seed=0):
                 diff = [a - b for a, b in zip(f1, f2)]
                 psnr1 = float(scene_df[target].iloc[i])
                 psnr2 = float(scene_df[target].iloc[j])
-                if psnr1>psnr2:
-                    label = [1,0]
-                else:
-                    label = [0,1]
+                label = int(psnr1<psnr2)
 
-                x_data.append(diff)
+                features = f1 + f2 + diff
+                x_data.append(features)
                 y_data.append(label)
 
     # after your loop
@@ -71,11 +108,11 @@ def create_dataset(data_file,scene='bicycle',target='psnr',seed=0):
             y_train.append(y)
 
     x_train = torch.tensor(x_train,dtype=torch.float32)
-    y_train = torch.tensor(y_train,dtype=torch.float32)
+    y_train = torch.tensor(y_train,dtype=torch.long)
     train_dataset = TensorDataset(x_train, y_train)
 
     x_test = torch.tensor(x_test, dtype=torch.float32)
-    y_test = torch.tensor(y_test, dtype=torch.float32)
+    y_test = torch.tensor(y_test, dtype=torch.long)
     test_dataset = TensorDataset(x_test, y_test)
 
     return train_dataset,test_dataset
@@ -108,8 +145,8 @@ def get_opts():
                         help='learning rate')
 
     # loss options
-    parser.add_argument('--loss', type=str, default='bce',
-                        choices=['bce', 'nll'],
+    parser.add_argument('--loss', type=str, default='ce',
+                        choices=['bce', 'nll','ce'],
                         help='which loss to train')
 
     # validation options
@@ -129,27 +166,24 @@ def get_opts():
 class BinarryClassifier(nn.Module):
     def __init__(self, indim=3*10, n_classes=2,act='Sigmoid'):
         super().__init__()
-        if act=='Sigmoid':
-            self.act = nn.Sigmoid()
-        if act=='Softmax':
-            self.act = nn.Softmax()
-        if act == 'logSoftmax':
-            self.act = nn.LogSoftmax()
 
-        self.fc1 = nn.Linear(indim, 16)  # Fully connected layer 1
+        self.fc1 = nn.Linear(indim, 32)  # Fully connected layer 1
         self.relu = nn.ReLU()  # ReLU activation
-        self.fc2 = nn.Linear(16, 8)  # Fully connected layer 2
-        self.fc3 = nn.Linear(8, n_classes)
+        self.fc2 = nn.Linear(32, 64)  # Fully connected layer 2
+        self.fc3 = nn.Linear(64, 32)
+        self.fc4 = nn.Linear(32, 16)
+        self.fc5 = nn.Linear(16, 8)
+        self.fc6 = nn.Linear(8, n_classes)
         self.dropout = nn.Dropout(p=0.2)
     def forward(self,x):
-        x = self.fc1(x)
-        x = self.relu(x)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.relu(self.fc4(x))
         x = self.dropout(x)
-        x = self.fc2(x)
-        x = self.relu(x)
+        x = self.relu(self.fc5(x))
         x = self.dropout(x)
-        x = self.fc3(x)
-        x = self.act(x)
+        x = self.fc6(x)
         return x
 
 class ViewClassifySystem(LightningModule):
@@ -163,12 +197,12 @@ class ViewClassifySystem(LightningModule):
         self.star_time = time.time()
 
         if self.hparams.loss == 'bce':
-            self.loss = nn.BCELoss()
-        if self.hparams.loss == 'nll':
-            self.loss = nn.NLLLoss()
+            self.loss = nn.BCEWithLogitsLoss()
+        elif self.hparams.loss == 'nll':
+            self.loss = nn.NLLLoss()  # would require LogSoftmax in forward
         else:
             self.loss = nn.CrossEntropyLoss()
-        self.model = BinarryClassifier(indim=10, n_classes=1,act='Softmax')
+        self.model = BinarryClassifier(indim=24, n_classes=2)
 
     def forward(self, features):
         return self.model(features)
@@ -176,7 +210,7 @@ class ViewClassifySystem(LightningModule):
     def setup(self, stage):
 
         self.train_dataset,self.test_dataset = create_dataset(data_file=self.hparams.data_file,
-                                                              test_scene=self.hparams.test_scene,
+                                                              scene=self.hparams.scene,
                                                               target=self.hparams.target)
 
 
@@ -197,7 +231,7 @@ class ViewClassifySystem(LightningModule):
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset,
-                          num_workers=16,
+                          num_workers=4,
                           persistent_workers=True,
                           batch_size=self.hparams.batch_size,
                           pin_memory=True,
@@ -205,27 +239,27 @@ class ViewClassifySystem(LightningModule):
 
     def val_dataloader(self):
         return DataLoader(self.test_dataset,
-                          num_workers=8,
+                          num_workers=4,
                           batch_size=8,
                           pin_memory=True)
 
     def training_step(self, batch, batch_nb, *args):
         inputs,targets = batch
-        inputs.requires_grad=True
-        results = self(inputs)
-        # targets = targets.type(torch.LongTensor)
-        loss = self.loss(results, targets.to(results))
-        print(loss)
+        logits = self(inputs)
+        if isinstance(self.loss, nn.CrossEntropyLoss):
+            loss = self.loss(logits, targets.long().to(logits.device))
+            preds = logits.argmax(dim=1)
+        elif isinstance(self.loss, nn.BCEWithLogitsLoss):
+            # if you choose BCE path, change the model to n_classes=1 and adapt labels to shape [B, 1]
+            probs = torch.sigmoid(logits.squeeze(-1))
+            loss = self.loss(logits.squeeze(-1), targets.float().to(logits.device))
+            preds = (probs >= 0.5).long()
+        else:
+            raise RuntimeError("Unsupported loss setup")
 
-        predicted_labels = (results >= 0.5).float()
-        correct = (predicted_labels == targets).sum().item()
-        total_samples = targets.size(0)
-
-        accuracy = correct / total_samples
-        self.log('lr', self.net_opt.param_groups[0]['lr'])
-        self.log('train/loss', loss.item())
-        self.log('train/accuracy', accuracy, True)
-
+        acc = (preds == targets.to(preds.device)).float().mean().item()
+        self.log('train/loss', float(loss))
+        self.log('train/accuracy', acc, prog_bar=True)
         return loss
 
     def on_validation_start(self):
@@ -236,46 +270,38 @@ class ViewClassifySystem(LightningModule):
     def validation_step(self, batch, batch_nb):
         torch.cuda.empty_cache()
         inputs, targets = batch
-        results = self(inputs)
+        logits = self(inputs)
+        preds = logits.argmax(dim=1)
+        correct = (preds == targets.to(preds.device)).sum()
+        n_samples = torch.tensor(targets.size(0), device=logits.device)
 
-        logs = {}
+        # for precision/recall/f1 in binary with class "1" as positive:
+        tp = ((preds == 1) & (targets.to(preds.device) == 1)).sum()
+        pos = (targets.to(preds.device) == 1).sum()
 
-        predicted_labels = (results >= 0.5).float()
-        correct = (predicted_labels == targets).sum()
-        total_samples = targets.size(0)
+        return {'correct': correct, 'n_samples': n_samples, 'tp': tp, 'pos': pos}
 
-        true_positives = ((predicted_labels == 1) & (targets == 1)).sum()
-        total_positives = (targets == 1).sum()
-
-        logs['correct'] = correct
-        logs['n_samples'] = torch.tensor(total_samples)
-        logs['true_positives'] = true_positives
-        logs['total_positives'] = total_positives
-
-        return logs
-
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self, outputs):
         ## compute accuracy
         corrects = torch.stack([x['correct'] for x in outputs])
-        total_corrects = all_gather_ddp_if_available(corrects).sum()
-
         n_samples = torch.stack([x['n_samples'] for x in outputs])
+        tps = torch.stack([x['tp'] for x in outputs])
+        pos = torch.stack([x['pos'] for x in outputs])
+
+        total_correct = all_gather_ddp_if_available(corrects).sum()
         total_samples = all_gather_ddp_if_available(n_samples).sum()
+        total_tp = all_gather_ddp_if_available(tps).sum()
+        total_pos = all_gather_ddp_if_available(pos).sum()
 
-        accuracy = total_corrects/total_samples
-        self.log('test/accuracy', accuracy, True)
+        accuracy = total_correct / (total_samples + 1e-10)
+        precision = total_tp / (total_tp + (total_pos - total_tp) + 1e-10)  # TP / (TP+FP)  (needs FP if you track it)
+        recall = total_tp / (total_pos + 1e-10)  # TP / (TP+FN)
+        f1 = 2 * (precision * recall) / (precision + recall + 1e-10)
 
-        true_positives = torch.stack([x['true_positives'] for x in outputs])
-        total_true_positives = all_gather_ddp_if_available(true_positives).sum()
-
-        total_positives = torch.stack([x['total_positives'] for x in outputs])
-        total_total_positives = all_gather_ddp_if_available(total_positives).sum()
-
-        precision = total_true_positives / (total_total_positives + 1e-10)  # to avoid division by zero
-        recall = total_true_positives / (total_samples + 1e-10)  # to avoid division by zero
-        f1 = 2 * (precision * recall) / (precision + recall + 1e-10)  #
-
-        self.log('test/f1', f1, True)
+        self.log('val/accuracy', accuracy, prog_bar=True)
+        self.log('val/precision', precision)
+        self.log('val/recall', recall)
+        self.log('val/f1', f1, prog_bar=True)
 
     def get_progress_bar_dict(self):
         # don't show the version number
@@ -310,6 +336,11 @@ if __name__ == '__main__':
                                name=hparams.exp_name,
                                default_hp_metric=False)
 
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        strategy = DDPStrategy(find_unused_parameters=False)
+    else:
+        strategy = "auto"  # or None (omit the arg)
+
     trainer = Trainer(max_epochs=0 if hparams.val_only else hparams.num_epochs,
                       check_val_every_n_epoch=hparams.num_epochs,
                       callbacks=callbacks,
@@ -317,10 +348,9 @@ if __name__ == '__main__':
                       enable_model_summary=False,
                       accelerator='gpu',
                       devices=hparams.num_gpus,
-                      strategy=DDPPlugin(find_unused_parameters=False)
-                               if hparams.num_gpus>1 else None,
+                      strategy=strategy,
                       num_sanity_val_steps=-1 if hparams.val_only else 0,
-                      precision=16)
+                      precision="16-mixed")
 
     trainer.fit(system)
 
