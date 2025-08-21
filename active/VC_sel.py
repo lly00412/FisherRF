@@ -33,7 +33,6 @@ def get_central_moments(U):
     moments = torch.tensor([mu, var, skewness, excess_kurtosis])
     return moments
 
-
 def log_histogram(uncertainty_map, bins=10, eps=1e-8):
     # Flatten to 1D
     values = uncertainty_map.flatten()
@@ -257,15 +256,20 @@ class VCSelector(torch.nn.Module):
                 depth_moment = get_central_moments(avg_depth_l2[~bg_mask])
                 depth_moments.append(depth_moment)
 
+                d_hist, _ = log_histogram(avg_depth_l2, bins=10, eps=1e-8)
+                depth_hists.append(d_hist)
+
                 # rgb uncertainty
                 rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
                 avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
                 color_moment = get_central_moments(avg_rgb_l2[~bg_mask])
                 color_moments.append(color_moment)
 
+                c_hist, _ = log_histogram(avg_rgb_l2, bins=10, eps=1e-8)
+                color_hists.append(c_hist)
+
                 # occ pixels
                 nv_pixels.append(nv_mask.sum().item())
-
 
                 ## candidate idxs
                 candidated_idxs.append(candidate_views[idx])
@@ -273,8 +277,10 @@ class VCSelector(torch.nn.Module):
         depth_moments = torch.stack(depth_moments, dim=0)
         color_moments = torch.stack(color_moments, dim=0)
         candidate_moments = torch.cat([depth_moments, color_moments], dim=1)
+        depth_hists = torch.stack(depth_hists, dim=0)
+        color_hists = torch.stack(color_hists, dim=0)
 
-        return candidated_idxs, candidate_moments
+        return candidated_idxs, candidate_moments, depth_hists, color_hists, nv_pixels
 
     def forward(self, x):
         return x

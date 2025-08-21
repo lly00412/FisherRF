@@ -155,16 +155,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 scene.candidate_views_filter = candidate_views_filter
                 
                 # Because selection is time consumeing
-                candidated_views, candidated_moments = active_method.cvs(gaussians, scene, num_views, pipe, background,
+                candidated_views, candidated_moments, \
+                    depth_hists, color_hists, nv_pixels = active_method.cvs(gaussians, scene, num_views, pipe, background,
                                                     exit_func=csm.should_exit)
 
                 candidated_moments = candidated_moments.detach().cpu().numpy()
+                depth_hists = depth_hists.detach().cpu().numpy()
+                color_hists = color_hists.detach().cpu().numpy()
                 df_new = pd.DataFrame({
                     "id": candidated_views,
                     "d_mean": candidated_moments[:, 0], "d_var": candidated_moments[:, 1], "d_skewness": candidated_moments[:, 2],
                     "d_kurtosis": candidated_moments[:, 3],
                     "c_mean": candidated_moments[:, 4], "c_var": candidated_moments[:, 5], "c_skewness": candidated_moments[:, 6],
                     "c_kurtosis": candidated_moments[:, 7],
+                    'd_hist': list(depth_hists),
+                    'c_hist': list(color_hists),
+                    'nv_pxs': nv_pixels,
                     "num_train": len(scene.train_idxs),
                     "psnr": pd.NA
                 })
