@@ -33,6 +33,27 @@ def get_central_moments(U):
     moments = torch.tensor([mu, var, skewness, excess_kurtosis])
     return moments
 
+
+def log_histogram(uncertainty_map, bins=10, eps=1e-8):
+    # Flatten to 1D
+    values = uncertainty_map.flatten()
+
+    # Avoid log(0) by adding eps
+    min_val = values.min().clamp(min=eps)
+    max_val = values.max().clamp(min=eps)
+
+    # Compute log-spaced bin edges
+    bin_edges = torch.logspace(min_val.log10(), max_val.log10(), steps=bins + 1, device=values.device)
+
+    # Assign each value to a bin index
+    bin_indices = torch.bucketize(values, bin_edges, right=False)
+
+    # Count occurrences (drop last bin edge to match histogram shape)
+    hist = torch.bincount(bin_indices, minlength=bins + 1)[:bins].float()
+
+    return hist, bin_edges
+
+
 class VCSelector(torch.nn.Module):
 
     def __init__(self, args) -> None:
@@ -168,6 +189,9 @@ class VCSelector(torch.nn.Module):
         # TODO: To be change latter
         depth_moments = []
         color_moments = []
+        depth_hists = []
+        color_hists = []
+        nv_pixels = []
         candidated_idxs = []
         for idx, cam in enumerate(tqdm(candidate_cameras, desc="Calculating Virtual Camera Uncertainty on candidate views")):
             if exit_func():
@@ -238,6 +262,10 @@ class VCSelector(torch.nn.Module):
                 avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
                 color_moment = get_central_moments(avg_rgb_l2[~bg_mask])
                 color_moments.append(color_moment)
+
+                # occ pixels
+                nv_pixels.append(nv_mask.sum().item())
+
 
                 ## candidate idxs
                 candidated_idxs.append(candidate_views[idx])
