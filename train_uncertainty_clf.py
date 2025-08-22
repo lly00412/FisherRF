@@ -162,19 +162,27 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 candidated_moments = candidated_moments.detach().cpu().numpy()
                 depth_hists = depth_hists.detach().cpu().numpy()
                 color_hists = color_hists.detach().cpu().numpy()
-                df_new = pd.DataFrame({
+                df_data = {
                     "id": candidated_views,
-                    "d_mean": candidated_moments[:, 0], "d_var": candidated_moments[:, 1], "d_skewness": candidated_moments[:, 2],
+                    "d_mean": candidated_moments[:, 0], "d_var": candidated_moments[:, 1],
+                    "d_skewness": candidated_moments[:, 2],
                     "d_kurtosis": candidated_moments[:, 3],
-                    "c_mean": candidated_moments[:, 4], "c_var": candidated_moments[:, 5], "c_skewness": candidated_moments[:, 6],
+                    "c_mean": candidated_moments[:, 4], "c_var": candidated_moments[:, 5],
+                    "c_skewness": candidated_moments[:, 6],
                     "c_kurtosis": candidated_moments[:, 7],
-                    'd_hist': list(depth_hists),
-                    'c_hist': list(color_hists),
                     'nv_pxs': nv_pixels,
-                    "num_train": len(scene.train_idxs),
-                    "psnr": pd.NA
-                })
-                df_new.to_csv(csv_path, mode="a", header=False, index=False)
+                    "num_train": [len(scene.train_idxs)] * len(candidated_views),
+                    "psnr": [pd.NA] * len(candidated_views),
+                }
+
+                for i in range(10):
+                    df_data[f"d_hist_{i}"] = depth_hists[:, i]
+                for i in range(10):
+                    df_data[f"c_hist_{i}"] = color_hists[:, i]
+
+                df_new = pd.DataFrame(df_data)
+                df_new.to_csv(csv_path, mode="a", index=False)
+                breakpoint()
 
             except RuntimeError as e:
                 print(e)
@@ -268,6 +276,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                     df = pd.read_csv(csv_path)
                     mask = (df["id"] == int(selected_view)) & (df["num_train"] == int(num_train-1))
+                    breakpoint()
                     if mask.any():
                         df.loc[mask, "psnr"] = float(psnr_test)
                     else:

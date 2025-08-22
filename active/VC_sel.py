@@ -42,7 +42,7 @@ def log_histogram(uncertainty_map, bins=10, eps=1e-8):
     max_val = values.max().clamp(min=eps)
 
     # Compute log-spaced bin edges
-    bin_edges = torch.logspace(min_val.log10(), max_val.log10(), steps=bins + 1, device=values.device)
+    bin_edges = torch.logspace(min_val.log10().item(), max_val.log10().item(), steps=bins + 1, device=values.device)
 
     # Assign each value to a bin index
     bin_indices = torch.bucketize(values, bin_edges, right=False)
@@ -256,7 +256,7 @@ class VCSelector(torch.nn.Module):
                 depth_moment = get_central_moments(avg_depth_l2[~bg_mask])
                 depth_moments.append(depth_moment)
 
-                d_hist, _ = log_histogram(avg_depth_l2, bins=10, eps=1e-8)
+                d_hist, _ = log_histogram(avg_depth_l2[~bg_mask], bins=10, eps=1e-8)
                 depth_hists.append(d_hist)
 
                 # rgb uncertainty
@@ -265,7 +265,7 @@ class VCSelector(torch.nn.Module):
                 color_moment = get_central_moments(avg_rgb_l2[~bg_mask])
                 color_moments.append(color_moment)
 
-                c_hist, _ = log_histogram(avg_rgb_l2, bins=10, eps=1e-8)
+                c_hist, _ = log_histogram(avg_rgb_l2[~bg_mask], bins=10, eps=1e-8)
                 color_hists.append(c_hist)
 
                 # occ pixels
