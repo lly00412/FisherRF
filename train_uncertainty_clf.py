@@ -17,6 +17,7 @@ from lpipsPyTorch import lpips, lpips_func
 from active import methods_dict
 import wandb
 import datetime
+import numpy as np
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -51,6 +52,71 @@ def load_checkpoint(ckpt_path: str, gaussians, scene, opt, ignore_train_idxs=Fal
 
     base_iter = ckpt_dict.get("base_iter", 0)
     return first_iter, base_iter
+
+
+def build_candidates_df(
+    candidated_views,             # shape (B,)
+    candidated_moments,           # shape (B, 8) -> d_mean..d_kurtosis, c_mean..c_kurtosis
+    depth_hists,                  # shape (B, 10)
+    color_hists,                  # shape (B, 10)
+    nv_pixels,                    # shape (B,)
+    num_train,                    # scalar (len(scene.train_idxs))
+    psnr_default=pd.NA
+):
+    # --- Normalize inputs to numpy arrays ---
+    def to_np(x):
+        if hasattr(x, "detach"):  # torch tensor
+            x = x.detach().cpu().numpy()
+        elif hasattr(x, "cpu") and hasattr(x, "numpy"):  # torch, just in case
+            x = x.cpu().numpy()
+        return np.asarray(x)
+
+    candidated_views  = to_np(candidated_views)
+    candidated_moments = to_np(candidated_moments)
+    depth_hists       = to_np(depth_hists)
+    color_hists       = to_np(color_hists)
+    nv_pixels         = to_np(nv_pixels)
+
+    # --- Sanity checks on shapes ---
+    B = candidated_views.shape[0]
+    assert candidated_moments.shape == (B, 8),  f"candidated_moments must be (B,8), got {candidated_moments.shape}"
+    assert depth_hists.shape  == (B, 10),       f"depth_hists must be (B,10), got {depth_hists.shape}"
+    assert color_hists.shape  == (B, 10),       f"color_hists must be (B,10), got {color_hists.shape}"
+    assert nv_pixels.shape[0] == B,             f"nv_pixels must be length B, got {nv_pixels.shape[0]} vs {B}"
+
+    # --- Build histogram columns (expanded, numeric) ---
+    d_hist_cols = {f"d_hist_{i}": depth_hists[:, i] for i in range(10)}
+    c_hist_cols = {f"c_hist_{i}": color_hists[:, i] for i in range(10)}
+
+    # --- Assemble DataFrame ---
+    df_new = pd.DataFrame({
+        "id": candidated_views,
+        "d_mean":      candidated_moments[:, 0],
+        "d_var":       candidated_moments[:, 1],
+        "d_skewness":  candidated_moments[:, 2],
+        "d_kurtosis":  candidated_moments[:, 3],
+        "c_mean":      candidated_moments[:, 4],
+        "c_var":       candidated_moments[:, 5],
+        "c_skewness":  candidated_moments[:, 6],
+        "c_kurtosis":  candidated_moments[:, 7],
+        "nv_pxs":      nv_pixels,
+        "num_train":   [int(num_train)] * B,  # repeat scalar per row
+        "psnr":        [psnr_default] * B,
+        **d_hist_cols,
+        **c_hist_cols,
+    })
+
+    # --- Enforce clean dtypes (helps avoid surprises on save/read) ---
+    df_new["id"]        = pd.to_numeric(df_new["id"], errors="coerce").astype("Int64")
+    df_new["nv_pxs"]    = pd.to_numeric(df_new["nv_pxs"], errors="coerce").astype("Int64")
+    df_new["num_train"] = pd.to_numeric(df_new["num_train"], errors="coerce").astype("Int64")
+    # hist columns -> float
+    for i in range(10):
+        df_new[f"d_hist_{i}"] = pd.to_numeric(df_new[f"d_hist_{i}"], errors="coerce").astype(float)
+        df_new[f"c_hist_{i}"] = pd.to_numeric(df_new[f"c_hist_{i}"], errors="coerce").astype(float)
+
+    return df_new
+
 
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, args):
@@ -159,30 +225,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     depth_hists, color_hists, nv_pixels = active_method.cvs(gaussians, scene, num_views, pipe, background,
                                                     exit_func=csm.should_exit)
 
-                candidated_moments = candidated_moments.detach().cpu().numpy()
-                depth_hists = depth_hists.detach().cpu().numpy()
-                color_hists = color_hists.detach().cpu().numpy()
-                df_data = {
-                    "id": candidated_views,
-                    "d_mean": candidated_moments[:, 0], "d_var": candidated_moments[:, 1],
-                    "d_skewness": candidated_moments[:, 2],
-                    "d_kurtosis": candidated_moments[:, 3],
-                    "c_mean": candidated_moments[:, 4], "c_var": candidated_moments[:, 5],
-                    "c_skewness": candidated_moments[:, 6],
-                    "c_kurtosis": candidated_moments[:, 7],
-                    'nv_pxs': nv_pixels,
-                    "num_train": [len(scene.train_idxs)] * len(candidated_views),
-                    "psnr": [pd.NA] * len(candidated_views),
-                }
+                df_new = build_candidates_df(
+                    candidated_views=candidated_views,
+                    candidated_moments=candidated_moments,
+                    depth_hists=depth_hists,
+                    color_hists=color_hists,
+                    nv_pixels=nv_pixels,
+                    num_train=len(scene.train_idxs),
+                    psnr_default=pd.NA
+                )
 
-                for i in range(10):
-                    df_data[f"d_hist_{i}"] = depth_hists[:, i]
-                for i in range(10):
-                    df_data[f"c_hist_{i}"] = color_hists[:, i]
-
-                df_new = pd.DataFrame(df_data)
-                df_new.to_csv(csv_path, mode="a", index=False)
-                breakpoint()
+                df_new.to_csv(csv_path, index=False)
+                # breakpoint()
+                # df_check = pd.read_csv(csv_path)
 
             except RuntimeError as e:
                 print(e)
@@ -276,7 +331,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                     df = pd.read_csv(csv_path)
                     mask = (df["id"] == int(selected_view)) & (df["num_train"] == int(num_train-1))
-                    breakpoint()
                     if mask.any():
                         df.loc[mask, "psnr"] = float(psnr_test)
                     else:
