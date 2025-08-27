@@ -65,7 +65,7 @@ class MLPSelector(torch.nn.Module):
 
     @torch.no_grad()
     def nbvs(self, gaussians, scene: Scene, num_views, pipe, background, exit_func) -> List[int]:
-        generate_features(self, gaussians, scene: Scene, num_views, pipe, background, exit_func
+        candidated_idxs, candidate_moments, depth_hists, color_hists, nv_pixels = self.generate_features(gaussians, Scene, num_views, pipe, background, exit_func)
 
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]
