@@ -229,56 +229,115 @@ def get_opts():
 
     return parser.parse_args()
 
-class ResidualBlock(nn.Module):
-    def __init__(self, dim, dropout=0.2):
+class BinarryClassifier(nn.Module):
+    def __init__(self, indim=25*3, n_classes=2, act=None, use_input_bn=True):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.SiLU(),
-            nn.Linear(dim, dim),
-            nn.SiLU(),
-            nn.Dropout(dropout)
-        )
 
-    def forward(self, x):
-        return x + self.net(x)  # residual
+        # optional final activation (usually leave None when using CrossEntropyLoss)
+        if act == 'Sigmoid':
+            self.act = nn.Sigmoid()
+        elif act == 'Softmax':
+            self.act = nn.Softmax(dim=-1)
+        elif act == 'logSoftmax':
+            self.act = nn.LogSoftmax(dim=-1)
+        else:
+            self.act = None
 
-class BinaryClassifier(nn.Module):
-    def __init__(self, in_dim=25*3, width=128, depth=3, dropout=0.2):
-        """
-        in_dim:   input feature dimension
-        width:    hidden width
-        depth:    number of residual blocks
-        dropout:  dropout prob
-        """
-        super().__init__()
-        self.stem = nn.Sequential(
-            nn.Linear(in_dim, width),
-            nn.ReLU(),
-            nn.Dropout(dropout)
-        )
-        self.blocks = nn.Sequential(*[ResidualBlock(width, dropout) for _ in range(depth)])
-        self.head = nn.Sequential(
-            nn.LayerNorm(width),
-            nn.ReLU(),
-            nn.Linear(width, width // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(width // 2, 2)  # single logit for binary
-        )
+        self.use_input_bn = use_input_bn
+        if self.use_input_bn:
+            self.bn_in = nn.BatchNorm1d(indim, eps=1e-5, momentum=0.1)
 
-        # Kaiming init for linear layers
+        self.fc1 = nn.Linear(indim, 64)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.fc2 = nn.Linear(64, 128)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.fc3 = nn.Linear(128, 64)
+        self.bn3 = nn.BatchNorm1d(64)
+        self.fc4 = nn.Linear(64, 32)
+        self.bn4 = nn.BatchNorm1d(32)
+        self.fc5 = nn.Linear(32, 16)
+        self.bn5 = nn.BatchNorm1d(16)
+        self.fc6 = nn.Linear(16, n_classes)
+
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(p=0.2)
+
+        # (optional) init
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, nonlinearity='linear')
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        x = self.stem(x)
-        x = self.blocks(x)
-        logit = self.head(x).squeeze(-1)  # shape: (B,)
-        return logit  # raw logits
+        if self.use_input_bn:
+            x = self.bn_in(x)
+
+        x = self.relu(self.bn1(self.fc1(x)))
+        x = self.relu(self.bn2(self.fc2(x)))
+        x = self.relu(self.bn3(self.fc3(x)))
+        x = self.relu(self.bn4(self.fc4(x)))
+        x = self.dropout(x)
+        x = self.relu(self.bn5(self.fc5(x)))
+        x = self.dropout(x)
+        x = self.fc6(x)  # (B, 2) for CE
+
+        if self.act is not None:
+            x = self.act(x)  # only if you explicitly want it (e.g., BCE or eval-time probs)
+        return x
+
+
+
+# class ResidualBlock(nn.Module):
+#     def __init__(self, dim, dropout=0.2):
+#         super().__init__()
+#         self.net = nn.Sequential(
+#             nn.LayerNorm(dim),
+#             nn.SiLU(),
+#             nn.Linear(dim, dim),
+#             nn.SiLU(),
+#             nn.Dropout(dropout)
+#         )
+#
+#     def forward(self, x):
+#         return x + self.net(x)  # residual
+
+# class BinaryClassifier(nn.Module):
+#     def __init__(self, in_dim=25*3, width=128, depth=3, dropout=0.2):
+#         """
+#         in_dim:   input feature dimension
+#         width:    hidden width
+#         depth:    number of residual blocks
+#         dropout:  dropout prob
+#         """
+#         super().__init__()
+#         self.stem = nn.Sequential(
+#             nn.Linear(in_dim, width),
+#             nn.ReLU(),
+#             nn.Dropout(dropout)
+#         )
+#         self.blocks = nn.Sequential(*[ResidualBlock(width, dropout) for _ in range(depth)])
+#         self.head = nn.Sequential(
+#             nn.LayerNorm(width),
+#             nn.ReLU(),
+#             nn.Linear(width, width // 2),
+#             nn.ReLU(),
+#             nn.Dropout(dropout),
+#             nn.Linear(width // 2, 2)  # single logit for binary
+#         )
+#
+#         # Kaiming init for linear layers
+#         for m in self.modules():
+#             if isinstance(m, nn.Linear):
+#                 nn.init.kaiming_normal_(m.weight, nonlinearity='linear')
+#                 if m.bias is not None:
+#                     nn.init.zeros_(m.bias)
+#
+#     def forward(self, x):
+#         x = self.stem(x)
+#         x = self.blocks(x)
+#         logit = self.head(x).squeeze(-1)  # shape: (B,)
+#         return logit  # raw logits
 
 class ViewClassifySystem(LightningModule):
     def __init__(self, hparams):
@@ -296,7 +355,7 @@ class ViewClassifySystem(LightningModule):
             self.loss = nn.NLLLoss()  # would require LogSoftmax in forward
         else:
             self.loss = nn.CrossEntropyLoss()
-        self.model = BinaryClassifier(in_dim=25*3, width=128, depth=3, dropout=0.25)
+        self.model = BinarryClassifier(in_dim=25*3, n_classes=2)
 
     def forward(self, features):
         return self.model(features)
@@ -422,7 +481,7 @@ class ViewClassifySystem(LightningModule):
         t = t.long()
 
         # --- safe class weights ---
-        weight = _get_ce_weight(self, device)
+        weight = self._get_ce_weight(device)
 
         # --- compute per-sample CE to detect bad rows ---
         loss_per = F.cross_entropy(
