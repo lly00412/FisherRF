@@ -355,7 +355,7 @@ class ViewClassifySystem(LightningModule):
             self.loss = nn.NLLLoss()  # would require LogSoftmax in forward
         else:
             self.loss = nn.CrossEntropyLoss()
-        self.model = BinarryClassifier(in_dim=25*3, n_classes=2)
+        self.model = BinarryClassifier(indim=25*3, n_classes=2)
 
     def forward(self, features):
         return self.model(features)
