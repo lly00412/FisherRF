@@ -6,23 +6,22 @@ export CUDA_VISIBLE_DEVICES=0
 #scenes=(kitchen garden bicycle counter bonsai flowers room stump)
 scenes=(kitchen)
 dataset=m360
-timestep=20250815_012312
+#timesteps=(20250822_182134 20250823_022647 20250823_102901 20250823_182949 20250824_022941 20250824_102820 20250824_183135 20250825_023450 20250825_104204 20250825_184925)
+#timesteps=(20250822_182134 20250823_022647 20250823_102901 20250823_182949 20250824_022941)
+timesteps=(20250822_182134)
 metric=psnr
 
-for SCENE in ${scenes[@]}
-do
-echo ${SCENE}
+RUN_TIME=$(date +%Y%m%d_%H%M%S)
 
-DATA_FILE=${ROOT_DIR}/${dataset}_mlp_${timestep}/${SCENE}/candidates.csv
+DATA_DIR=${ROOT_DIR}/${dataset}_data
 
 python binary_classifer_on_view_selection.py \
-    --data_file ${DATA_FILE} \
+    --data_dir ${DATA_DIR} \
     --dataset_name ${dataset} \
-    --scene ${SCENE} \
+    --data_timesteps "${timesteps[@]}" \
+    --scenes "${scenes[@]}" \
     --target ${metric} \
-    --exp_name ${SCENE}_${timestep}_${metric} \
+    --exp_name mlp_${RUN_TIME}_${metric} \
     --loss ce \
-    --num_epochs 300 --batch_size 128 --lr 1e-4 \
+    --num_epochs 300 --batch_size 64 --lr 1e-4 \
     --seed 0
-
-done
