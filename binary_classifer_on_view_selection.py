@@ -356,6 +356,7 @@ class ViewClassifySystem(LightningModule):
         else:
             self.loss = nn.CrossEntropyLoss()
         self.model = BinarryClassifier(indim=25*3, n_classes=2)
+        self._val_outputs = []
 
     def forward(self, features):
         return self.model(features)
@@ -583,7 +584,6 @@ class ViewClassifySystem(LightningModule):
         # os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_idx):
-        torch.cuda.empty_cache()
         inputs, targets = batch
         logits = self.model(inputs)  # keep consistent with training
         loss, preds, probs = self._compute_loss_and_preds(logits, targets)
@@ -601,7 +601,7 @@ class ViewClassifySystem(LightningModule):
         # Log per-step loss for monitoring
         self.log("val/loss_step", loss, prog_bar=False, on_step=True, on_epoch=False)
 
-        return {
+        out = {
             "val_loss": loss.detach(),
             "correct": correct.detach(),
             "n": n.detach(),
@@ -610,31 +610,45 @@ class ViewClassifySystem(LightningModule):
             "fn": fn.detach(),
             "pos": pos.detach(),
         }
+        self._val_outputs.append(out)
+        return out
 
-    def on_validation_epoch_end(self, outputs):
-        if len(outputs) == 0:
+    def on_validation_epoch_end(self):
+        outputs = self._val_outputs
+        if not outputs:
             return
 
         device = outputs[0]["n"].device
-        sum_keys = ["val_loss", "correct", "n", "tp", "fp", "fn", "pos"]
-        agg = {k: torch.stack([o[k].to(device) for o in outputs]).sum()
-        if k != "val_loss" else torch.stack([o[k].to(device) for o in outputs]).mean()
-               for k in sum_keys}
+
+        # accumulate sums
+        total_n = torch.stack([o["n"].to(device) for o in outputs]).sum()
+        total_correct = torch.stack([o["correct"].to(device) for o in outputs]).sum()
+        total_tp = torch.stack([o["tp"].to(device) for o in outputs]).sum()
+        total_fp = torch.stack([o["fp"].to(device) for o in outputs]).sum()
+        total_fn = torch.stack([o["fn"].to(device) for o in outputs]).sum()
+        total_pos = torch.stack([o["pos"].to(device) for o in outputs]).sum()
+
+        # sample-weighted loss average
+        # assumes each "val_loss" is mean over the batch; weight by batch size
+        batch_losses = torch.stack([o["val_loss"].to(device) for o in outputs])
+        batch_ns = torch.stack([o["n"].to(device).float() for o in outputs])
+        val_loss = (batch_losses * batch_ns).sum() / batch_ns.clamp_min(1).sum()
 
         # metrics
-        val_loss = agg["val_loss"]
-        acc = agg["correct"].float() / agg["n"].clamp_min(1)
-
-        precision = agg["tp"].float() / (agg["tp"] + agg["fp"]).clamp_min(1)
-        recall = agg["tp"].float() / agg["pos"].clamp_min(1)
+        acc = total_correct.float() / total_n.clamp_min(1)
+        precision = total_tp.float() / (total_tp + total_fp).clamp_min(1)
+        recall = total_tp.float() / total_pos.clamp_min(1)
         f1 = 2 * precision * recall / (precision + recall).clamp_min(1e-8)
 
-        # Log epoch metrics
-        self.log("val/loss", val_loss, prog_bar=True)
-        self.log("val/accuracy", acc, prog_bar=True)
-        self.log("val/precision", precision, prog_bar=False)
-        self.log("val/recall", recall, prog_bar=False)
-        self.log("val/f1", f1, prog_bar=True)
+        # epoch-level logging
+        self.log("val/loss", val_loss, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/accuracy", acc, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/precision", precision, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/recall", recall, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/f1", f1, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+
+        # optional: clear cache & (if you really must) free memory now
+        self._val_outputs.clear()
 
     def get_progress_bar_dict(self):
         # don't show the version number
