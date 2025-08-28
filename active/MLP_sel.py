@@ -67,7 +67,7 @@ class MLPSelector(torch.nn.Module):
     def nbvs(self, gaussians, scene: Scene, num_views, pipe, background, exit_func) -> List[int]:
         candidated_idxs, candidate_moments, depth_hists, color_hists, nv_pixels = self.generate_features(gaussians, Scene, num_views, pipe, background, exit_func)
 
-        selected_idxs = np.argsort(vcurf_scores)[-num_views:]
+        selected_idxs = np.argsort(acq_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]
         return selected_view_idx
 
@@ -173,100 +173,90 @@ class MLPSelector(torch.nn.Module):
         return candidated_idxs, candidate_moments, depth_hists, color_hists, nv_pixels
 
     @torch.no_grad()
-    def pick_best_candidate(
+    def pick_best_candidate_tournament(self,
             model: nn.Module,
             feats: torch.Tensor,  # shape: (N, 25)
-            batch_size: int = 2048,
-            device: torch.device | str | None = None,
+            batch_size: int = 4096,
+            device: torch.device  = None,
             positive_class: int = 1,  # which class index means "j better than i"
-            method: str = "tournament",  # "tournament" or "sequential"
-            return_stats: bool = False,
+            show_progress: bool = True,
+            return_pairwise: bool = False,  # if True, also return pairwise prob matrix (NxN, float32)
     ):
         """
+        Pairwise tournament using a binary comparator MLP with input [fi, fj, fi-fj].
         Returns:
-            best_idx (int)
-            (optional) dict with 'win_counts' (N,), 'pairwise_matrix' (N,N) if method='tournament'
+            best_idx: int
+            acq_scores: np.ndarray (N,), win counts per candidate (integer)
+            (optional) pairwise: torch.FloatTensor (N, N), where pairwise[i, j] = P(j > i)
         """
         assert feats.ndim == 2 and feats.size(1) == 25, "feats must be (N,25)"
         N = feats.size(0)
         if N == 1:
-            return (0, {"win_counts": torch.tensor([0]), "pairwise_matrix": torch.zeros(1, 1)}) if return_stats else 0
+            acq_scores = np.array([0], dtype=np.int64)
+            if return_pairwise:
+                return 0, acq_scores, torch.zeros(1, 1)
+            return 0, acq_scores
 
-        model_was_training = model.training
+        was_training = model.training
         model.eval()
 
         dev = device if device is not None else next(model.parameters()).device
         feats = feats.to(dev)
 
         def _build_inputs(i_idx: torch.Tensor, j_idx: torch.Tensor) -> torch.Tensor:
-            """Create [fi, fj, fi-fj] for matching index vectors (same shape)."""
             fi = feats[i_idx]  # (...,25)
             fj = feats[j_idx]  # (...,25)
             diff = fi - fj  # (...,25)
             return torch.cat([fi, fj, diff], dim=-1)  # (...,75)
 
-        def _predict_better(i_idx: torch.Tensor, j_idx: torch.Tensor) -> torch.Tensor:
-            """
-            Returns probability that j is better than i (shape = i_idx.shape).
-            """
+        def _p_j_better_than_i(i_idx: torch.Tensor, j_idx: torch.Tensor) -> torch.Tensor:
             x = _build_inputs(i_idx, j_idx)
-            logits = model(x)  # (...,2)
-            if logits.ndim == 1:  # fallback if model returns a single logit
-                # interpret positive logit as "j better"; map to prob via sigmoid
+            logits = model(x)  # (...,2) or (...,)
+            if logits.ndim == 1:  # single-logit fallback
                 return torch.sigmoid(logits)
             probs = torch.softmax(logits, dim=-1)
-            return probs[..., positive_class]  # P(j better than i)
+            return probs[..., positive_class]
 
-        if method == "sequential":
-            # O(N): running champion
-            best = 0
-            for j in range(1, N):
-                p = _predict_better(torch.tensor([best], device=dev), torch.tensor([j], device=dev))[0]
-                if p > 0.5:
-                    best = j
-            if return_stats:
-                # Optionally compute light stats: wins from champion pass (not full matrix)
-                stats = {"win_counts": None, "pairwise_matrix": None}
-                return best, stats
-            return best
+        win_counts = torch.zeros(N, device=dev, dtype=torch.int32)
+        pairwise = torch.zeros((N, N), device=dev, dtype=torch.float32) if return_pairwise else None
 
-        elif method == "tournament":
-            # O(N^2) in batches: compute all pairwise decisions i vs j (i!=j)
-            win_counts = torch.zeros(N, device=dev, dtype=torch.int32)
-            pairwise = torch.zeros((N, N), device=dev, dtype=torch.float32)
+        # Build all (i,j) with i!=j and process in batches
+        ii, jj = torch.meshgrid(torch.arange(N, device=dev),
+                                torch.arange(N, device=dev),
+                                indexing='ij')
+        mask = ii != jj
+        i_flat = ii[mask].reshape(-1)
+        j_flat = jj[mask].reshape(-1)
 
-            # Build all (i,j) pairs with i != j
-            ii, jj = torch.meshgrid(torch.arange(N, device=dev), torch.arange(N, device=dev), indexing='ij')
-            mask = ii != jj
-            i_flat = ii[mask].reshape(-1)
-            j_flat = jj[mask].reshape(-1)
+        iterator = range(0, i_flat.numel(), batch_size)
+        if show_progress:
+            iterator = tqdm(iterator,
+                            total=(i_flat.numel() + batch_size - 1) // batch_size,
+                            desc="Tournament comparisons")
 
-            # Batched inference
-            for start in range(0, i_flat.numel(), batch_size):
+        try:
+            for start in iterator:
                 end = min(start + batch_size, i_flat.numel())
-                p = _predict_better(i_flat[start:end], j_flat[start:end])  # P(j better than i)
-                # A "win" for j if p > 0.5
+                p = _p_j_better_than_i(i_flat[start:end], j_flat[start:end])  # P(j > i)
+                if return_pairwise:
+                    pairwise[i_flat[start:end], j_flat[start:end]] = p
+
+                # Count a win for j when p > 0.5
                 winners_j = p > 0.5
-
-                # Update pairwise matrix: pairwise[i,j] = P(j > i)
-                pairwise[i_flat[start:end], j_flat[start:end]] = p
-
-                # Count wins efficiently
-                # For entries where j wins, increment win_counts[j]
                 if winners_j.any():
                     idx_winners = j_flat[start:end][winners_j]
-                    win_counts.index_add_(0, idx_winners, torch.ones_like(idx_winners, dtype=win_counts.dtype))
+                    win_counts.index_add_(0, idx_winners,
+                                          torch.ones_like(idx_winners, dtype=win_counts.dtype))
+        finally:
+            if was_training:
+                model.train()
 
-            # Pick the index with maximum wins (ties -> lowest index)
-            best_idx = int(torch.argmax(win_counts).item())
+        best_idx = int(torch.argmax(win_counts).item())
+        acq_scores = win_counts.detach().cpu().numpy().astype(np.int64)
 
-            if return_stats:
-                stats = {
-                    "win_counts": win_counts.detach().cpu(),
-                    "pairwise_matrix": pairwise.detach().cpu(),  # NxN, pairwise[i,j]=P(j > i)
-                }
-                return best_idx, stats
-            return best_idx
+        if return_pairwise:
+            return best_idx, acq_scores, pairwise.detach().cpu()
+        return best_idx, acq_scores
 
     def forward(self, x):
         return x
