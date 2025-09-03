@@ -60,17 +60,25 @@ class MLPSelector(torch.nn.Module):
         self.n_vcam = args.n_vcam
         self.scale =  args.r_scale
         self.mlp = BinarryClassifier(indim=25*3, n_classes=2)
-        load_ckpt(self.mlp,args.ckpt_path)
+        load_ckpt(self.mlp,args.mlp_ckpt)
+        self.mlp = self.mlp.cuda()
         self.mlp.eval()
 
     @torch.no_grad()
     def nbvs(self, gaussians, scene: Scene, num_views, pipe, background, exit_func) -> List[int]:
-        candidated_idxs, candidate_moments, depth_hists, color_hists, nv_pixels = self.generate_features(gaussians, Scene, num_views, pipe, background, exit_func)
+        candidate_views, candidate_moments, depth_hists, color_hists, nv_pixels = self.generate_features(gaussians, scene, num_views, pipe, background, exit_func)
+        device = color_hists.device
+        d_means = candidate_moments[:,0].unsqueeze(1).to(device)
+        d_vars = candidate_moments[:,1].unsqueeze(1).to(device)
+        c_means = candidate_moments[:,4].unsqueeze(1).to(device)
+        c_vars = candidate_moments[:,5].unsqueeze(1).to(device)
+        nv_pixels = torch.tensor([nv_pixels]).float().to(c_means).T
+        candidate_features = torch.cat([d_means, d_vars, c_means, c_vars, nv_pixels, color_hists,depth_hists],dim=1)
 
+        _, acq_scores = self.pick_best_candidate_tournament(self.mlp, candidate_features)
         selected_idxs = np.argsort(acq_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]
         return selected_view_idx
-
 
     def generate_features(self, gaussians, scene: Scene, num_views, pipe, background, exit_func) -> List[int]:
         candidate_views = list(deepcopy(scene.get_candidate_set()))

@@ -365,7 +365,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_emsemble", default=None, type=int, help="num of view for emsembling training")
     parser.add_argument("--n_vcam", default=6, type=int, help="num of view for virtual camera training")
     parser.add_argument("--r_scale", default=0.1, type=float, help="radius of sampling virtual camera")
-
+    parser.add_argument("--mlp_ckpt", type=str, help="mlp checkpoint for view selection")
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
@@ -397,7 +397,6 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     args.port = find_free_port()
     print(f"GUI at: {args.ip}:{args.port}")
-
 
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
