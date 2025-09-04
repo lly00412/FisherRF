@@ -191,10 +191,9 @@ def get_opts():
     parser.add_argument('--data_timesteps',nargs="+", type=str, required=True,
                         help='timestep to save csv file to create dataset')
     parser.add_argument('--dataset_name', type=str, default='m360',
-                        choices=['m360', 'blender'],
+                        choices=['m360', 'blender','tant_db'],
                         help='which dataset to train/test')
     parser.add_argument('--scenes', nargs="+", type=str, required=True,default=['bicycle','kitchen'],
-                        choices=['kitchen','garden','bicycle','counter','bonsai','flowers','room','stump','all'],
                         help='run on which scene')
     parser.add_argument('--target', type=str, default='psnr',
                         choices=['psnr','ssim','lpips'],
