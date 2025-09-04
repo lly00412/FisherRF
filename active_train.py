@@ -84,6 +84,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     print(f"schema: {schema.load_its}")
     scene.train_idxs = schema.init_views
     print(f"train cameras: {scene.train_idxs}")
+    train_image_names = [cam.image_name for cam in scene.getTrainCameras()]
+    print(f"train images: {train_image_names}")
 
     active_method = methods_dict[args.method](args)
 
@@ -145,6 +147,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             print(f"ITER {iteration}: selected views: {selected_views}")
             scene.train_idxs.extend(selected_views)
             print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
+            train_image_names = [cam.image_name for cam in scene.getTrainCameras()]
+            print(f"ITER {iteration}: train images after selection: {train_image_names}")
 
             gaussians.optimizer.zero_grad(set_to_none = True)
 

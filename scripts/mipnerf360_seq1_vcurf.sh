@@ -1,7 +1,7 @@
 export CUDA_VISIBLE_DEVICES=0
 
 DATASET_PATH=/mnt/Data2/nerf_datasets/m360/
-EXP_PATH=./output/m360_seq4
+EXP_PATH=./output/m360_seq4_debug
 
 scenes=(kitchen garden bicycle counter bonsai flowers room stump)
 seeds=(0 100 500 1000 1500 2000 2500 3000 3500 4000)
