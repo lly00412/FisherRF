@@ -1,5 +1,7 @@
 export CUDA_VISIBLE_DEVICES=1
 
+########### generate data ##################
+
 #EXP_PATH=./output/tandt/
 ##seeds=(0 100 500 1000 1500 2000 2500 3000 3500 4000)
 #seeds=(2000 2500 3000 3500 4000)
@@ -45,9 +47,9 @@ export CUDA_VISIBLE_DEVICES=1
 ########### train mlp ##################
 
 export ROOT_DIR=/mnt/Data2/liyan/FisherRF/output/
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 
-scenes=(train truck)
+scenes=(drjohnson playroom)
 dataset=tant_db
 timesteps=(20250903_002320 20250903_002540 20250903_031107 20250903_031714 20250903_055722)
 metric=psnr
