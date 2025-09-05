@@ -73,7 +73,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     else:
         train_idxs = None
 
-
     schema = schema_dict[args.schema](dataset_size=len(scene.getTrainCameras()),
                                       scene=scene,
                                       train_idxs=train_idxs,
