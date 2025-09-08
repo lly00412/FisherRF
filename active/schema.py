@@ -164,6 +164,31 @@ class VNSeqMReplace(BaseSchema):
                 it_base += cur_dataset_size * interval_epochs
                 num_views_left -= M
 
+class VK(BaseSchema):
+    def __init__(self,**kwargs) -> None:
+        dataset_size = kwargs.get("dataset_size")
+        obj = kwargs.get("train_idxs")
+        num_inits = kwargs.get("num_inits")
+        num_emsemble = kwargs.get("num_emsemble")
+        if obj in override_train_idxs_dict.keys():
+            self.init_views = override_train_idxs_dict[obj]
+            if len(self.init_views)>num_inits:
+                self.init_views = random.sample(self.init_views, num_inits)
+        else:
+            random.seed(0)
+            self.init_views = random.sample(range(dataset_size), num_inits)
+        if num_emsemble is not None:
+            emsemble_seed = kwargs.get("emsemble_seed")
+            random.seed(emsemble_seed)
+            self.init_views = random.sample(self.init_views, num_emsemble)
+
+        random.shuffle(self.init_views)
+        self.load_its = {}
+
+    def num_views_to_add(self, it: int) -> int:
+        return 0
+
+
 
 V20Seq1Inplace = partial(VNSeqMInplace, N=20, M=1, num_init_views=4,interval_epochs=100)
 V10Seq1Inplace = partial(VNSeqMInplace, N=10, M=1, num_init_views=4,interval_epochs=100)
@@ -178,6 +203,7 @@ schema_dict: Dict[str, BaseSchema] = {'all': All, "debug": V20Seq1Debug,
                                        "v5seq1_inplace": V5Seq1Inplace,
                                       "v20seq4_inplace": V20Seq4Inplace,
                                       "allseq1_inplace":AllSeq1Replace,
+                                       "vk": VK,
                                       }
 
 override_test_idxs_dict: Dict[str, List[int]] = {"basket": list(range(42, 50,2)), "africa": list(range(6, 14, 2)),

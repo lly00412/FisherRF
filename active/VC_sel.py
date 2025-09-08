@@ -15,9 +15,6 @@ from scene.cameras import VirtualCam
 import torch.nn as nn
 
 from gaussian_renderer import modified_render
-
-
-
 def get_central_moments(U):
     x = U.flatten().float()
     mu = x.mean()
