@@ -50,8 +50,14 @@ do
 
 #    python active_train.py -s ${SCENE_PATH} -m ${MODEL_PATH} --eval --method=mlp --seed=0 --schema v20seq1_inplace \
 #           --iterations 30000 --n_vcam=8 --r_scale=0.3 --mlp_ckpt=${MLP_CKPT}
-    python active_train.py -s ${SCENE_PATH} -m ${MODEL_PATH} --eval --method=mlp --seed=${SEED} --schema v20seq4_inplace \
-           --iterations 20000 --n_vcam=8 --r_scale=0.3 --mlp_ckpt=${MLP_CKPT}
+###############   MLP version
+
+#    python active_train.py -s ${SCENE_PATH} -m ${MODEL_PATH} --eval --method=mlp --seed=${SEED} --schema v20seq4_inplace \
+#           --iterations 20000 --n_vcam=8 --r_scale=0.3 --mlp_ckpt=${MLP_CKPT}
+
+############### handcraft version
+    python active_train.py -s ${SCENE_PATH} -m ${MODEL_PATH} --eval --method=vcurf --seed=${SEED} --schema v20seq4_inplace \
+           --iterations 20000 --n_vcam=6 --r_scale=0.3
 
 done
 done

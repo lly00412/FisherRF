@@ -194,7 +194,6 @@ V20Seq1Inplace = partial(VNSeqMInplace, N=20, M=1, num_init_views=4,interval_epo
 V10Seq1Inplace = partial(VNSeqMInplace, N=10, M=1, num_init_views=4,interval_epochs=100)
 V20Seq4Inplace = partial(VNSeqMInplace, N=20, M=4, num_init_views=4, interval_epochs=300)
 V5Seq1Inplace = partial(VNSeqMInplace, N=5, M=1, num_init_views=4,interval_epochs=100)
-
 AllSeq1Replace = partial(VNSeqMReplace, M=1, num_init_views=4, interval_epochs=100)
 
 

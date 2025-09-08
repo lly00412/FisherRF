@@ -63,6 +63,12 @@ class VCSelector(torch.nn.Module):
         candidate_views = list(deepcopy(scene.get_candidate_set()))
 
         candidate_cameras = scene.getCandidateCameras()
+        train_views = scene.getTrainCameras().copy()
+        distance_scores = torch.zeros(len(candidate_cameras))
+        for i, view in enumerate(candidate_cameras):
+            for train_view in train_views:
+                distance_scores[i] += torch.norm(view.camera_center - train_view.camera_center).item()
+
         # TODO: To be change latter
         depth_scores = []
         color_scores = []
@@ -141,7 +147,7 @@ class VCSelector(torch.nn.Module):
                 color_scores.append(weight_rgb_l2[~bg_mask].mean().item())
 
                 # count vaild pixels
-                nv_pixels = nv_mask.sum(0).squeeze()
+                nv_pixels = nv_mask.sum(0).squeeze() + bg_mask.squeeze()
                 occ_mask = (nv_pixels > 0)
                 total_pixels = bg_mask.numel()
                 occ_weight = occ_mask.float().sum() /total_pixels
@@ -172,7 +178,11 @@ class VCSelector(torch.nn.Module):
         v_color_scores = np.ones_like(occ_scores)
         v_color_scores[v_mask] = softmax_color_scores
 
-        vcurf_scores = occ_scores*v_depth_scores*v_color_scores
+        distance_scores = distance_scores.cpu().numpy()
+        exp_distance_scores = np.exp(distance_scores - np.max(distance_scores))  # for numerical stability
+        softmax_distance_scores = exp_distance_scores / np.sum(exp_distance_scores)
+
+        vcurf_scores = (v_color_scores+v_depth_scores)*occ_scores*softmax_distance_scores
 
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]
