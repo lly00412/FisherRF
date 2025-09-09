@@ -132,29 +132,35 @@ class VCSelector(torch.nn.Module):
             #  compute uncertainty by l2 diff
             ################################
             if bg_mask.float().sum()<(h*w):  # something can be rendered
-                # weight scores
-                confs = 1.0 - nv_mask.sum(0)+1.0/(self.n_vcam+1.0)
+                # count vaild pixels
+                nv_pixels = nv_mask.sum(0).squeeze()
+                occ_mask = (nv_pixels > 5) | bg_mask.squeeze()
+                total_pixels = bg_mask.numel()
+                occ_weight = occ_mask.float().sum() / total_pixels
+                occ_scores.append(occ_weight.item())
 
                 depth_l2 = (vir2rd_depths - rd_depths) **2
-                avg_depth_l2 = torch.squeeze(depth_l2.sum(0) / numels)
-                weight_depth_l2 = avg_depth_l2*confs.squeeze()
-                depth_scores.append(weight_depth_l2[~bg_mask].mean().item())
+                # avg_depth_l2 = torch.squeeze(depth_l2.sum(0) / numels)
+                # weight_depth_l2 = avg_depth_l2
+                # depth_scores.append(weight_depth_l2[~bg_mask].mean().item())
+                depth_l2 += 1000.0*nv_mask.clone()
+                min_depth_l2 = depth_l2.min(0).values.squeeze()
+                depth_scores.append(min_depth_l2[~occ_mask].mean().item())
+
 
                 # rgb uncertainty
                 rgb_l2 = ((vir2rd_pred_imgs - rd_pred_imgs) ** 2).mean(1)
-                avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
-                weight_rgb_l2 = avg_rgb_l2 * confs.squeeze()
-                color_scores.append(weight_rgb_l2[~bg_mask].mean().item())
+                # avg_rgb_l2 = torch.squeeze(rgb_l2.sum(0) / numels)
+                # weight_rgb_l2 = avg_rgb_l2
+                # color_scores.append(weight_rgb_l2[~bg_mask].mean().item())
+                rgb_l2 += 1000.0*nv_mask.clone().squeeze()
+                min_rgb_l2 = rgb_l2.min(0).values.squeeze()
+                color_scores.append(min_rgb_l2[~occ_mask].mean().item())
 
-                # count vaild pixels
-                nv_pixels = nv_mask.sum(0).squeeze() + bg_mask.squeeze()
-                occ_mask = (nv_pixels > 0)
-                total_pixels = bg_mask.numel()
-                occ_weight = occ_mask.float().sum() /total_pixels
-                occ_scores.append(occ_weight.item())
                 # vcurf_scores.append((vc_scores[~bg_mask].mean() * weight).item())
                 # del norm_rgb_sigmas, norm_depth_sigmas, bg_mask
-                del avg_depth_l2, avg_rgb_l2, bg_mask
+                # del avg_depth_l2, avg_rgb_l2, bg_mask
+                del min_depth_l2, min_rgb_l2, bg_mask
             else:
                 depth_scores.append(1.0)
                 color_scores.append(1.0)
@@ -182,7 +188,9 @@ class VCSelector(torch.nn.Module):
         exp_distance_scores = np.exp(distance_scores - np.max(distance_scores))  # for numerical stability
         softmax_distance_scores = exp_distance_scores / np.sum(exp_distance_scores)
 
-        vcurf_scores = (v_color_scores+v_depth_scores)*occ_scores*softmax_distance_scores
+        # vcurf_scores = (v_color_scores+v_depth_scores)*occ_scores*softmax_distance_scores
+        vcurf_scores = (v_color_scores + v_depth_scores) * (1 - softmax_distance_scores)
+        # vcurf_scores = v_color_scores * softmax_distance_scores
 
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]

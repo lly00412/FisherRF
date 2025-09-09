@@ -182,7 +182,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         "id",
         "d_mean", "d_var", "d_skewness", "d_kurtosis",
         "c_mean", "c_var", "c_skewness", "c_kurtosis",
-        "num_train", "psnr"
+        "num_train", "psnr", "ssim", "lpips", "img_name"
     ]
     df = pd.DataFrame(columns=cols)
     df.to_csv(csv_path, index=False)
@@ -255,6 +255,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 scene.train_idxs = base_train_idxs.copy()
                 scene.train_idxs.extend([selected_view])
                 print(f"ITER {iteration}: training views after selection: {scene.train_idxs}")
+                train_image_names = [cam.image_name for cam in scene.getTrainCameras()]
+                print(f"ITER {iteration}: train images after selection: {train_image_names}")
+                current_selected_img = train_image_names[-1]
 
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
@@ -327,12 +330,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             gaussians.optimizer.zero_grad(set_to_none=True)
 
                 with torch.no_grad():
-                    psnr_test = report_metrics(iteration+interval_iters, scene, render, (pipe, background))
+                    psnr_test, ssim_test, lpips_test = report_metrics(iteration+interval_iters, scene, render, (pipe, background))
 
                     df = pd.read_csv(csv_path)
                     mask = (df["id"] == int(selected_view)) & (df["num_train"] == int(num_train-1))
                     if mask.any():
                         df.loc[mask, "psnr"] = float(psnr_test)
+                        df.loc[mask, "ssim"] = float(ssim_test)
+                        df.loc[mask, "lpips"] = float(lpips_test)
+                        df.loc[mask,"img_name"] = current_selected_img
                     else:
                         print(f"No row found for (id={selected_view}, num_train={num_train-1}). ")
                         new_row = {
@@ -341,6 +347,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             "c_mean": pd.NA, "c_var": pd.NA, "c_skewness": pd.NA, "c_kurtosis": pd.NA,
                             "num_train": int(num_train-1),
                             "psnr": float(psnr_test),
+                            "ssim": float(ssim_test),
+                            "lpips": float(lpips_test),
+                            "img_name": current_selected_img,
                         }
                         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                     df.to_csv(csv_path, index=False)
@@ -580,7 +589,7 @@ def report_metrics(iteration, scene : Scene, renderFunc, renderArgs):
     # Report test and samples of training set
     print(f"Running evaluation for iteration: {iteration}")
     torch.cuda.empty_cache()
-    # lpips = lpips_func("cuda", net_type='vgg')
+    lpips = lpips_func("cuda", net_type='vgg')
     validation_configs = (
                           {'name': 'train',
                            'cameras': [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in
@@ -588,18 +597,25 @@ def report_metrics(iteration, scene : Scene, renderFunc, renderArgs):
                           {'name': 'test', 'cameras': scene.getTestCameras()},)
 
     psnr_test = 0.0
+    ssim_test = 0.0
+    lpips_test = 0.0
     for config in validation_configs:
         if config['cameras'] and len(config['cameras']) > 0:
             for idx, viewpoint in enumerate(config['cameras']):
                 image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                 gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                 psnr_test += psnr(image, gt_image).mean().double()
+                ssim_test += ssim(image, gt_image).mean().double()
+                lpips.to(image.device)
+                lpips_test += lpips(image, gt_image).mean().double()
 
             psnr_test /= len(config['cameras'])
+            ssim_test /= len(config['cameras'])
+            lpips_test /= len(config['cameras'])
 
-            print("\n[ITER {}] Evaluating {}: PSNR {}".format(iteration, config['name'], psnr_test))
+            print("\n[ITER {}] Evaluating {}: PSNR: {}, SSIM: {}, LPIPS: {}".format(iteration, config['name'], psnr_test,ssim_test, lpips_test))
     torch.cuda.empty_cache()
-    return psnr_test.item()
+    return psnr_test.item(), ssim_test.item(), lpips_test.item()
 
 
 
@@ -622,7 +638,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[5_000, 10_000, 15_000, 20_000, 25_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[399, 5_000, 10_000, 15_000, 20_000, 25_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[5_000, 10_000, 15_000, 20_000, 25_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
