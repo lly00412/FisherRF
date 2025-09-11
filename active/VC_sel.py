@@ -190,8 +190,8 @@ class VCSelector(torch.nn.Module):
 
         # vcurf_scores = (v_color_scores+v_depth_scores)*occ_scores*softmax_distance_scores
         # vcurf_scores = v_color_scores + v_depth_scores  # rgb+depth
-        vcurf_scores = v_depth_scores # depth
-        # vcurf_scores = v_color_scores  # rgb
+        # vcurf_scores = v_depth_scores # depth
+        vcurf_scores = v_color_scores  # rgb
 
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]
