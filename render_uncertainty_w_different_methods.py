@@ -160,67 +160,88 @@ def render_warpRF_uncertainty(view, train_cameras, gaussians, pipeline, backgrou
     return pred_img, uncertanity_map, pixel_gaussian_counter, depth, rests
 
 @torch.no_grad()
-def render_VCURF_uncertainty(view, train_cameras, gaussians, pipeline, background, hessian_color_C,args):
+def render_VCURF_uncertainty(view, gaussians, pipeline, background,n_vcams=8, r_scale=0.3):
     ###########################
-    #  rendering current view
+    #  rendering RGB, depth & error
     ###########################
     rests = {}
     render_pkg = modified_render(view, gaussians, pipeline, background)
     pred_img = render_pkg["render"]
+    depth = render_pkg["depth"]
     gt_img = view.original_image[0:3, :, :]
     pixel_gaussian_counter = render_pkg["pixel_gaussian_counter"]
     rgb_err = torch.mean((pred_img - gt_img)**2,0)
     rests['rgb_err'] = rgb_err
-    depth = render_pkg["depth"]
 
     ###########################
-    #  rendering training
-    ##########################
-    _, rd_c2w = extract_scene_center_and_C2W(depth, view)
+    #  rendering vcams
+    ###########################
+
+    # create sampling sphere by median depth of the scene center
+    look_at, rd_c2w = extract_scene_center_and_C2W(depth, view)
+    D_median = depth.clone().flatten().median(0).values
 
     rd_c2w = rd_c2w.to(depth.device)
     K = getIntrinsicMatrix(width=view.image_width, height=view.image_height,
-                            fovX=view.FoVx, fovY=view.FoVy).to(depth.device)  # (4,4)
+                           fovX=view.FoVx, fovY=view.FoVy).to(depth.device)  # (4,4)
+    GetVcam = VirtualCam(view)
     backwarp = BackwardWarping(out_hw=(view.image_height, view.image_width),
-                                device=depth.device, K=K)
+                               device=depth.device, K=K)
+    N = n_vcams
+    scale = r_scale
+    # random sampling n virtual camera at a sphere centering at real camera
 
-
-    ### load training cameras
-    N = len(train_cameras)
+    radiaus = scale*D_median
+    Vcams = GetVcam.get_N_near_cam_by_look_at(N, look_at=look_at, radiaus=radiaus)
 
     rd_depth = depth.clone().unsqueeze(0).unsqueeze(0)
     rd_depths = rd_depth.repeat(N, 1, 1, 1)
+    rd_pred_imgs = pred_img.clone().unsqueeze(0).repeat(N, 1, 1, 1)
 
-    train_depths = []
-    train_pred_imgs = []
-    rd2trains = []
-    for train_view in train_cameras:
-        train_render_pkg = modified_render(train_view, gaussians, pipeline, background)
-        train_depth = train_render_pkg['depth']
-        train_pred_img = train_render_pkg['render']
-        train_w2c = train_view.world_view_transform.transpose(0, 1)
-        rd2train = train_w2c @ rd_c2w
-        rd2trains.append(rd2train)
-        train_depths.append(train_depth.unsqueeze(0))
-        train_pred_imgs.append(train_pred_img)
-    train_depths = torch.stack(train_depths)
-    train_pred_imgs = torch.stack(train_pred_imgs)
-    rd2trains = torch.stack(rd2trains)
-    train2rd_pred_imgs, train2rd_depths, nv_mask = backwarp(img_src=train_pred_imgs, depth_src=train_depths,
+    vir_depths = []
+    vir_pred_imgs = []
+    rd2virs = []
+    for vir_view in Vcams:
+        vir_render_pkg = modified_render(vir_view, gaussians, pipe, background)
+        vir_depth = vir_render_pkg['depth']
+        vir_pred_img = vir_render_pkg['render']
+        vir_w2c = vir_view.world_view_transform.transpose(0, 1)
+        rd2vir = vir_w2c @ rd_c2w
+        rd2virs.append(rd2vir)
+        vir_depths.append(vir_depth.unsqueeze(0))
+        vir_pred_imgs.append(vir_pred_img)
+    vir_depths = torch.stack(vir_depths)
+    vir_pred_imgs = torch.stack(vir_pred_imgs)
+    rd2virs = torch.stack(rd2virs)
+    vir2rd_pred_imgs, vir2rd_depths, nv_mask = backwarp(img_src=vir_pred_imgs, depth_src=vir_depths,
                                                         depth_tgt=rd_depths,
-                                                        tgt2src_transform=rd2trains)
-    ################################
+                                                        tgt2src_transform=rd2virs)
+    ###############################
+    #  fillter out backgroud pixels and occlusion mask
+    ###############################
+    bg_mask = ~(depth.squeeze() > 0)
+    _, h, w = pred_img.shape
+
+    numels = float(N) - nv_mask.sum(0)
+
+    ###############################
     #  compute uncertainty by l2 diff
     ################################
-    # depth uncertainty
-    train2rd_depth_sum = train2rd_depths.sum(0)
-    numels = float(N) - nv_mask.sum(0)
-    train2rd_depth = torch.zeros_like(rd_depth.squeeze(0))
-    train2rd_depth[numels > 0] = train2rd_depth_sum[numels > 0] / numels[numels > 0]
-    depth_l2 = (rd_depth.squeeze(0) - train2rd_depth) ** 2
-    uncertanity_map = depth_l2.squeeze(0)
+    vir2rd_depth_sum = vir2rd_depths.sum(0)
+    vir2rd_depth = torch.zeros_like(rd_depth.squeeze(0))
+    vir2rd_depth[numels > 0] = vir2rd_depth_sum[numels > 0] / numels[numels > 0]
+    depth_l2 = (rd_depth.squeeze(0) - vir2rd_depth) ** 2
+    uncertanity_map_D = depth_l2.squeeze(0)
 
-    return pred_img, uncertanity_map, pixel_gaussian_counter, depth, rests
+    # rgb uncertainty
+    vir2rd_pred_sum = vir2rd_pred_imgs.sum(0).mean(0, keepdim=True)
+    rendering_ = pred_img.mean(0, keepdim=True)
+    vir2rd_pred = torch.zeros_like(rendering_)
+    vir2rd_pred[numels > 0] = vir2rd_pred_sum[numels > 0] / numels[numels > 0]
+    rgb_l2 = (rendering_ - vir2rd_pred) ** 2
+    uncertanity_map_C = rgb_l2.squeeze(0)
+
+    return pred_img, uncertanity_map_C, uncertanity_map_D, pixel_gaussian_counter, depth, rests
 
 
 @torch.no_grad()
