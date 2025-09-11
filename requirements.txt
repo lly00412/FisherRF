@@ -1,0 +1,7 @@
+einops==0.7.0
+Pillow==10.2.0
+pymeshlab==2023.12.post1
+scipy==1.12.0
+wandb==0.15.12
+seaborn
+git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110

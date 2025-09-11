@@ -1,24 +1,25 @@
-export CUDA_VISIBLE_DEVICES=0
+#!/bin/bash
+export CUDA_VISIBLE_DEVICES=1
 
-DATASET_PATH=/mnt/Data2/nerf_datasets/nerf_synthetic/
-EXP_PATH=./output/nerf_synthetic
+DATASET_PATH=/home/liyan/data/data/nerf_synthetic/
+EXP_PATH=./output/nerf_synthetic_v20
 
-emsemble_seeds=(0 500 1000 2000 600)
 scenes=(ship chair lego drums)
+
+# Define run-time once
+RUN_TIME=$(date +%Y%m%d_%H%M%S)
+
+# Optionally create a subfolder with this version
+EXP_PATH_WITH_TIME=${EXP_PATH}_${RUN_TIME}
 
 for OBJ in ${scenes[@]}
 do
-#  for eseed in ${emsemble_seeds[@]}
-#  do
-#    python active_train.py -s ${DATASET_PATH}/${OBJ} -m ${EXP_PATH}/${OBJ}/${eseed} --train_idxs blender --eval \
-#            --method=H_reg --seed=0 --schema vk --n_inits 15 \
-#            --iterations 20000 --save_iterations 2000 5000 10000 15000 20000 \
-#            --test_iterations 2000 5000 10000 15000 20000 \
-#            --n_emsemble 10 \
-#            --emsemble_seed ${eseed}
-#  done
-python render_uncertainty_w_emsemble.py -m ${EXP_PATH}/${OBJ}/ \
-          --emsemble_seeds 0 500 1000 2000 600
+    SCENE_PATH=${DATASET_PATH}/${OBJ}
+    MODEL_PATH=${EXP_PATH_WITH_TIME}/${OBJ}
 
+    echo python active_train.py -s ${SCENE_PATH} -m ${MODEL_PATH} --eval --method=vcurf --seed=0 --schema v20seq1_inplace --iterations 20000 --run_time ${RUN_TIME}
+
+    python active_train.py -s ${SCENE_PATH} -m ${MODEL_PATH} --eval --method=H_reg --seed=0 --schema vk --n_inits 20 \
+           --iterations 30000 --run_time ${RUN_TIME} --white_background
 
 done
