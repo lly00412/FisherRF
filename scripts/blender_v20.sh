@@ -1,7 +1,6 @@
 #!/bin/bash
 export CUDA_VISIBLE_DEVICES=1
 
-WANDB_API_KEY=d0fd672de750a319067b40209586710c058b184e
 DATASET_PATH=/home/liyan/data/data/nerf_synthetic/
 EXP_PATH=./output/nerf_synthetic_v20
 
