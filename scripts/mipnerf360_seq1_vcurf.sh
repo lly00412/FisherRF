@@ -1,10 +1,10 @@
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 
 DATASET_PATH=/mnt/Data2/nerf_datasets/m360/
-EXP_PATH=./output/m360_seq1_rgb_depth
+EXP_PATH=./output/m360_seq1_depth
 #EXP_PATH=./output/m360_seq1_debug
 
-scenes=(bicycle counter bonsai flowers room stump)
+scenes=(kitchen garden bicycle counter room stump bonsai flowers)
 seeds=(0)
 
 #for SEED in ${seeds[@]}

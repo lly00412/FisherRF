@@ -1,0 +1,9 @@
+#!/bin/bash
+
+SCENES=(bicycle kitchen counter garden)
+
+for SCENE in ${SCENES[@]}
+do
+      EXP_PATH="/home/nate/data/MipNeRF360_pretrained/${SCENE}/v20/"
+      python render_uncertainty_warprf.py -m ${EXP_PATH} --scene ${SCENE} --training_views "scripts/mip360_training_views.yaml" --seed 29506
+done
