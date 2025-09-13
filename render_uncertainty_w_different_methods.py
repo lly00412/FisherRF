@@ -54,7 +54,19 @@ def capture(self):
         # self.spatial_lr_scale,
     )
 
-def load_csv_file(csv_path, cols=['img_name''psnr']):
+def softmax(x):
+    """
+    Compute softmax values for a list or 1D numpy array.
+    Args:
+        x (list or np.ndarray): Input scores.
+    Returns:
+        np.ndarray: Softmax probabilities.
+    """
+    x = np.array(x, dtype=float)
+    e_x = np.exp(x - np.max(x))  # shift for numerical stability
+    return e_x / e_x.sum()
+
+def load_csv_file(csv_path, cols=['img_name','psnr']):
     df = pd.read_csv(csv_path,usecols=cols)
     return df
 
@@ -93,11 +105,12 @@ def render_fisherRF_uncertainty(view, gaussians, pipeline, background, hessian_c
     render_pkg = modified_render(view, gaussians, pipeline, background, override_color=hessian_color_C)
     depth = render_pkg["depth"]
     uncertanity_map_C = reduce(render_pkg["render"], "c h w -> h w", "mean")
+    rests['view_uncert'] = uncertanity_map_C.mean().item()
 
     return pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests
 
 @torch.no_grad()
-def render_warpRF_uncertainty(view, train_cameras, gaussians, pipeline, background, hessian_color_C,args):
+def render_warpRF_uncertainty(view, train_cameras, gaussians, pipeline, background):
     ###########################
     #  rendering current view
     ###########################
@@ -156,6 +169,7 @@ def render_warpRF_uncertainty(view, train_cameras, gaussians, pipeline, backgrou
     train2rd_depth[numels > 0] = train2rd_depth_sum[numels > 0] / numels[numels > 0]
     depth_l2 = (rd_depth.squeeze(0) - train2rd_depth) ** 2
     uncertanity_map = depth_l2.squeeze(0)
+    rests['view_uncert'] = uncertanity_map[uncertanity_map>0].mean().item()
 
     return pred_img, uncertanity_map, pixel_gaussian_counter, depth, rests
 
@@ -202,7 +216,7 @@ def render_VCURF_uncertainty(view, gaussians, pipeline, background,n_vcams=8, r_
     vir_pred_imgs = []
     rd2virs = []
     for vir_view in Vcams:
-        vir_render_pkg = modified_render(vir_view, gaussians, pipe, background)
+        vir_render_pkg = modified_render(vir_view, gaussians, pipeline, background)
         vir_depth = vir_render_pkg['depth']
         vir_pred_img = vir_render_pkg['render']
         vir_w2c = vir_view.world_view_transform.transpose(0, 1)
@@ -240,6 +254,9 @@ def render_VCURF_uncertainty(view, gaussians, pipeline, background,n_vcams=8, r_
     vir2rd_pred[numels > 0] = vir2rd_pred_sum[numels > 0] / numels[numels > 0]
     rgb_l2 = (rendering_ - vir2rd_pred) ** 2
     uncertanity_map_C = rgb_l2.squeeze(0)
+
+    rests['depth_uncert'] = uncertanity_map_D[uncertanity_map_D > 0].mean().item()
+    rests['rgb_uncert'] = uncertanity_map_C[uncertanity_map_C > 0].mean().item()
 
     return pred_img, uncertanity_map_C, uncertanity_map_D, pixel_gaussian_counter, depth, rests
 
@@ -308,11 +325,24 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
     AUCs = {}
     AUSEs = {}
 
+    FisherRF_U = []
+    WarpRF_U = []
+    VCURF_C = []
+    VCURF_D = []
+    RGB_err = []
+
+    train_cameras_names = load_yaml(args.training_views)[args.scene]
+    train_cameras = [cam for cam in train_views if cam.image_name in train_cameras_names]
+
     if hasattr(args, 'test_idxs'):
         test_views = [test_views[i] for i in args.test_idxs]
 
+    df = load_csv_file(args.csv_file, cols=['img_name', 'psnr', 'ssim', 'lpips','nv_pxs'])
+    test_img_names = df['img_name'].tolist()
+    test_views_ = [cam for cam in train_views if cam.image_name in test_img_names]
+
     with torch.no_grad():
-        for idx, view in enumerate(tqdm(test_views, desc="Rendering on test set")):
+        for idx, view in enumerate(tqdm(test_views_, desc="Rendering on test set")):
             
             to_homo = lambda x: torch.cat([x, torch.ones(x.shape[:-1] + (1, ), dtype=x.dtype, device=x.device)], dim=-1)
             pts3d_homo = to_homo(xyz)
@@ -320,117 +350,36 @@ def render_set(model_path, name, iteration, train_views, test_views, gaussians, 
             gaussian_depths = pts3d_cam[:, 2, None]
 
             cur_hessian_color_C = hessian_color_C * gaussian_depths.clamp(min=0)
-            # cur_hessian_color_D = hessian_color_D * gaussian_depths.clamp(min=0)
-            pred_img, uncertanity_map_C, pixel_gaussian_counter, depth, rests = render_uncertainty(view, gaussians, pipeline, background, cur_hessian_color_C, args)
 
-            mask = (depth>0.).detach().cpu()
+            ### render the FisherRF
+            pred_img, fisherRF_uncertanity_map_C, pixel_gaussian_counter, depth, fisherrf_rests = render_fisherRF_uncertainty(view, gaussians, pipeline, background, cur_hessian_color_C)
+            FisherRF_U.append(fisherrf_rests['view_uncert'])
+            RGB_err.append(fisherrf_rests['rgb_err'].mean().item())
 
-            # save raw output
-            save_rests = {}
-            # save_rests['fisher_D'] = uncertanity_map_D.cpu()
-            for k in rests.keys():
-                save_rests[k] = rests[k].cpu()
-            np.savez(os.path.join(eval_path, f"uncertainty_{idx:03d}_{view.image_name}.npz"),
-                     uncertanity_map=uncertanity_map_C.cpu(), pixel_gaussian_counter=pixel_gaussian_counter.cpu(),
-                     depth=depth.cpu(), rests=save_rests,
-                     )
 
-            ################################
-            #  compute auc
-            ################################
-            opt_label = 'rgb_err'
-            values = {
-                'fisherRF':uncertanity_map_C[mask].flatten(),
-                # 'fisherRF_D': uncertanity_map_D[mask].flatten(),
-            }
+            #### render WarpRF
+            _, WarpRF_uncertanity_map, _, _, warprf_rests = render_warpRF_uncertainty(view, train_cameras, gaussians, pipeline, background)
+            WarpRF_U.append(warprf_rests['view_uncert'])
 
-            for k in rests.keys():
-                values[k] = rests[k][mask].flatten()
 
-            rocs = {}
-            aucs = {}
-            auses = {}
+            ## render VCURF
+            _, VCURF_uncertanity_map_C, VCURF_uncertanity_map_D, _, _, vcurf_rests = render_VCURF_uncertainty(view, gaussians, pipeline, background, n_vcams=8, r_scale=0.3)
+            VCURF_C.append(vcurf_rests['rgb_uncert'])
+            VCURF_D.append(vcurf_rests['depth_uncert'])
 
-            for val in values.keys():
-                roc, auc = compute_roc(opt=values[opt_label], est=values[val], intervals=20)
-                _, ause = compute_ause(opt=values[opt_label], est=values[val], intervals=100)
-                rocs[val] = np.array(roc)
-                aucs[val] = auc
-                auses[val] = ause
-                if val not in ROCs.keys():
-                    ROCs[val] = [roc]
-                    AUCs[val] = [auc]
-                    AUSEs[val] = [ause]
-                else:
-                    ROCs[val].append(roc)
-                    AUCs[val].append(auc)
-                    AUSEs[val].append(ause)
+        save_path = f'./output/m360_corr/{args.scene}/'
+        os.makedirs(save_path,exist_ok=True)
+        save_csv = f'{save_path}/candidates.csv'
+        df['VCURF_C'] = VCURF_C
+        df['VCURF_D'] = VCURF_D
+        VCURF_U = softmax(VCURF_C) + softmax(VCURF_D)
+        df['FisherRF'] = FisherRF_U
+        df['WarpRF'] = WarpRF_U
+        df['RGB_err'] = RGB_err
+        df['VCURF'] = VCURF_U
+        df.to_csv(save_csv,index=False)
 
-            roc_fname = os.path.join(roc_path, '{0:05d}'.format(idx) + ".npz")
-            np.savez(roc_fname,roc_dict = rocs)
-
-            # breakpoint()
-
-            plot_file = os.path.join(roc_path, '{0:05d}'.format(idx) + ".jpg")
-            auc_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "auc.txt")
-            ause_file = os.path.join(roc_path, '{0:05d}'.format(idx) + "ause.txt")
-            plot_roc(ROC_dict=rocs, fig_name=plot_file, opt_label=opt_label,intervals=20)
-            write_auc(AUC_dict=aucs, txt_name=auc_file)
-            write_auc(AUC_dict=auses,txt_name=ause_file)
-
-            ################################
-            #  save all outputs
-            ################################
-
-            # save depth
-            # plt.figure(facecolor='white')
-            # sns.heatmap(depth.detach().cpu(), square=True,mask=~mask.detach().cpu().numpy())
-            # plt.savefig(os.path.join(depth_path, f"{view.image_name}.jpg"))
-            # plt.close()
-            fname = os.path.join(depth_path, f"{view.image_name}.jpg")
-            plot_unmap(depth.detach().cpu(), mask, fname, cmap='magma', q=0.95)
-
-            #
-            # # save error
-            fname = os.path.join(error_path, f"{view.image_name}.jpg")
-            plot_unmap(rests['rgb_err'].detach().cpu(), mask, fname, q=0.8)
-            #
-            #
-            if args.render_vcam:
-                # save l2 diff
-                for N in args.n_vcam:
-                    for scale in args.r_scale:
-                        # plt.figure(facecolor='white')
-                        # sns.heatmap(torch.log(rests[f'vcu({N} vcams, {scale} med)']).detach().cpu(), square=True, mask=~mask.detach().cpu().numpy())
-                        # plt.savefig(os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg"))
-                        # plt.close()
-                        fname = os.path.join(eval_path, f"vcurf_{N}_vcams_{scale}_med_{view.image_name}.jpg")
-                        plot_unmap(rests[f'vcu({N} vcams, {scale} med)'].detach().cpu(), mask, fname, q=0.8)
-                if 'vs-nerf' in rests.keys():
-                    fname = os.path.join(eval_path, f"vsnerf_{view.image_name}.jpg")
-                    plot_unmap(rests[f'vs-nerf'].detach().cpu(), mask, fname, q=0.8)
-            #
-            # # save fisherRF
-            # # sns.heatmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), square=True)
-            # # plt.savefig(os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg"))
-            # # plt.close()
-            #
-            fname = os.path.join(eval_path, f"fisher_C_{view.image_name}.jpg")
-            #plot_unmap(torch.log(uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), mask, fname, q=0.95)
-            plot_unmap((uncertanity_map_C / pixel_gaussian_counter).detach().cpu(), mask, fname, q=0.8)
-
-            # breakpoint()
-
-        for val in ROCs.keys():
-            ROCs[val] = np.array(ROCs[val]).mean(0)
-            AUCs[val] = np.array(AUCs[val]).mean(0)
-            AUSEs[val] = np.array(AUSEs[val]).mean(0)
-        summary_plot = os.path.join(roc_path, f'{name}' + ".png")
-        summary_auc = os.path.join(roc_path, f'{name}' + ".txt")
-        summary_ause = os.path.join(roc_path, f'{name}' + "ause.txt")
-        plot_roc(ROC_dict=ROCs, fig_name=summary_plot, opt_label=opt_label,intervals=20)
-        write_auc(AUC_dict=AUCs, txt_name=summary_auc)
-        write_auc(AUC_dict=AUSEs, txt_name=summary_ause)
+        print('done')
 
 
 def render_set_current(model_path, name, iteration, train_views, test_views, gaussians, pipeline, background, perturb_scale=1., camera_extent=None, args=None):
@@ -532,6 +481,11 @@ if __name__ == "__main__":
     parser.add_argument("--only_depth", action="store_true", help="render uncertainty only use depth l2 difference")
     parser.add_argument("--only_rgb", action="store_true", help="render uncertainty only use rgb l2 difference")
     # parser.add_argument("--thetas", nargs="+", type=float, default=[1,3,5,7],help="angle of turning virtual cameras")
+    parser.add_argument("--scene", default=None, type=str, help="Current scene name.")
+    parser.add_argument("--training_views", default=None, type=str,
+                        help="Path to yaml file defining the initial training views for each scene.")
+    parser.add_argument("--csv_file", default=None, type=str,
+                        help="Path to csv file defining the GT PSNR for each scene.")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
