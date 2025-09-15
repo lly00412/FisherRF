@@ -73,6 +73,7 @@ class VCSelector(torch.nn.Module):
         depth_scores = []
         color_scores = []
         occ_scores = []
+        vc_scores = []
         for idx, cam in enumerate(tqdm(candidate_cameras, desc="Calculating Virtual Camera Uncertainty on candidate views")):
             if exit_func():
                 raise RuntimeError("csm should exit early")
@@ -157,6 +158,9 @@ class VCSelector(torch.nn.Module):
                 min_rgb_l2 = rgb_l2.min(0).values.squeeze()
                 color_scores.append(min_rgb_l2[~occ_mask].mean().item())
 
+                min_all = min_depth_l2+min_rgb_l2
+                vc_scores.append(min_all[~occ_mask].mean().item())
+
                 # vcurf_scores.append((vc_scores[~bg_mask].mean() * weight).item())
                 # del norm_rgb_sigmas, norm_depth_sigmas, bg_mask
                 # del avg_depth_l2, avg_rgb_l2, bg_mask
@@ -165,33 +169,46 @@ class VCSelector(torch.nn.Module):
                 depth_scores.append(1.0)
                 color_scores.append(1.0)
                 occ_scores.append(1.0)
+                vc_scores.append(1.0)
 
         # vcurf_scores = np.array(vcurf_scores)
         occ_scores = np.array(occ_scores)
         v_mask = (occ_scores < 1.0)
 
-        depth_scores = np.array(depth_scores)
-        v_depth = depth_scores[v_mask]
-        exp_depth_scores = np.exp(v_depth - np.max(v_depth))  # for numerical stability
-        softmax_depth_scores = exp_depth_scores / np.sum(exp_depth_scores)
-        v_depth_scores = np.ones_like(occ_scores)
-        v_depth_scores[v_mask] = softmax_depth_scores
 
-        color_scores = np.array(color_scores)
-        v_color = color_scores[v_mask]
-        exp_color_scores = np.exp(v_color - np.max(v_color))  # for numerical stability
-        softmax_color_scores = exp_color_scores / np.sum(exp_color_scores)
-        v_color_scores = np.ones_like(occ_scores)
-        v_color_scores[v_mask] = softmax_color_scores
-
-        distance_scores = distance_scores.cpu().numpy()
-        exp_distance_scores = np.exp(distance_scores - np.max(distance_scores))  # for numerical stability
-        softmax_distance_scores = exp_distance_scores / np.sum(exp_distance_scores)
+        ########### if compute base on normalization scores
+        # depth_scores = np.array(depth_scores)
+        # v_depth = depth_scores[v_mask]
+        # exp_depth_scores = np.exp(v_depth - np.max(v_depth))  # for numerical stability
+        # softmax_depth_scores = exp_depth_scores / np.sum(exp_depth_scores)
+        # v_depth_scores = np.ones_like(occ_scores)
+        # v_depth_scores[v_mask] = softmax_depth_scores
+        #
+        # color_scores = np.array(color_scores)
+        # v_color = color_scores[v_mask]
+        # exp_color_scores = np.exp(v_color - np.max(v_color))  # for numerical stability
+        # softmax_color_scores = exp_color_scores / np.sum(exp_color_scores)
+        # v_color_scores = np.ones_like(occ_scores)
+        # v_color_scores[v_mask] = softmax_color_scores
+        #
+        # distance_scores = distance_scores.cpu().numpy()
+        # exp_distance_scores = np.exp(distance_scores - np.max(distance_scores))  # for numerical stability
+        # softmax_distance_scores = exp_distance_scores / np.sum(exp_distance_scores)
 
         # vcurf_scores = (v_color_scores+v_depth_scores)*occ_scores*softmax_distance_scores
         # vcurf_scores = v_color_scores + v_depth_scores  # rgb+depth
-        vcurf_scores = v_depth_scores # depth
+        # vcurf_scores = v_depth_scores # depth
         # vcurf_scores = v_color_scores  # rgb
+
+        ########### if compute without normalization
+        vc_scores = np.array(vc_scores)
+        v_vc = vc_scores[v_mask]
+        exp_vc_scores = np.exp(v_vc - np.max(v_vc))  # for numerical stability
+        softmax_vc_scores = exp_vc_scores / np.sum(exp_vc_scores)
+        v_vc_scores = np.ones_like(occ_scores)
+        v_vc_scores[v_mask] = softmax_vc_scores
+
+        vcurf_scores = v_vc_scores
 
         selected_idxs = np.argsort(vcurf_scores)[-num_views:]
         selected_view_idx = [candidate_views[k] for k in selected_idxs]

@@ -2,7 +2,7 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$" />
-    <orderEntry type="jdk" jdkName="Remote Python 3.8.19 (sftp://lchen39@155.246.81.47:22/home/lchen39/.conda/envs/activegamer/bin/python)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="activegamer" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>

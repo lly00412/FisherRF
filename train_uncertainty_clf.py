@@ -26,6 +26,7 @@ except ImportError:
 from utils.cluster_manager import ClusterStateManager
 
 import pandas as pd
+import sys
 
 csm = ClusterStateManager()
 
@@ -54,8 +55,10 @@ def load_checkpoint(ckpt_path: str, gaussians, scene, opt, ignore_train_idxs=Fal
     return first_iter, base_iter
 
 
+
 def build_candidates_df(
     candidated_views,             # shape (B,)
+    candidated_names,             # shape (B,)
     candidated_moments,           # shape (B, 8) -> d_mean..d_kurtosis, c_mean..c_kurtosis
     depth_hists,                  # shape (B, 10)
     color_hists,                  # shape (B, 10)
@@ -91,6 +94,7 @@ def build_candidates_df(
     # --- Assemble DataFrame ---
     df_new = pd.DataFrame({
         "id": candidated_views,
+        "img_name":   candidated_names,
         "d_mean":      candidated_moments[:, 0],
         "d_var":       candidated_moments[:, 1],
         "d_skewness":  candidated_moments[:, 2],
@@ -222,11 +226,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 
                 # Because selection is time consumeing
                 candidated_views, candidated_moments, \
-                    depth_hists, color_hists, nv_pixels = active_method.cvs(gaussians, scene, num_views, pipe, background,
+                    depth_hists, color_hists, nv_pixels, candidated_names = active_method.cvs(gaussians, scene, num_views, pipe, background,
                                                     exit_func=csm.should_exit)
 
                 df_new = build_candidates_df(
                     candidated_views=candidated_views,
+                    candidated_names=candidated_names,
                     candidated_moments=candidated_moments,
                     depth_hists=depth_hists,
                     color_hists=color_hists,
@@ -236,6 +241,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 )
 
                 df_new.to_csv(csv_path, index=False)
+                # stop here
+                sys.exit()
                 # breakpoint()
                 # df_check = pd.read_csv(csv_path)
 
