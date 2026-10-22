@@ -55,43 +55,62 @@ except ImportError:
 # ---------------------------------------------------------------------------
 class GaussianModelWithUnc(GaussianModel):
 
-    def __init__(self, sh_degree: int, unc_lr: float = 1e-3):
+    def __init__(self, sh_degree: int, unc_lr: float = 1e-3, c_min: float = 1e-3):
         super().__init__(sh_degree)
         self._unc = torch.empty(0)
+        # True once a Gaussian has received any gradient from the VCURF loss.
+        # Gaussians never supervised (only seen by masked pixels) report the max uncertainty.
+        self.unc_observed = torch.empty(0, dtype=torch.bool)
         self.unc_lr = unc_lr
+        self.c_min = c_min  # C_hat lower clamp; u_max = 1 / c_min
 
-    # gamma = exp(s): confidence used for rendering and the loss
+    @property
+    def u_max(self):
+        return 1.0 / self.c_min
+
+    # gamma = exp(s): confidence used for the loss (carries grad)
     @property
     def get_confidence(self):
         return torch.exp(self._unc)
 
-    # u = exp(-s): per-splat uncertainty
+    # u = exp(-s) for supervised Gaussians, u_max for never-supervised ones
     @property
     def get_uncertainty(self):
-        return torch.exp(-self._unc)
+        u = torch.exp(-self._unc)
+        return torch.where(self.unc_observed[:, None], u, torch.full_like(u, self.u_max))
+
+    @torch.no_grad()
+    def mark_observed(self, weight_on_supervised_pixels, min_weight):
+        """Mark Gaussians whose blending weight on supervised pixels exceeds min_weight."""
+        self.unc_observed |= weight_on_supervised_pixels > min_weight
 
     def _zeros_unc(self, n):
         return torch.zeros((n, 1), dtype=torch.float, device="cuda")
 
+    def _false_obs(self, n):
+        return torch.zeros((n,), dtype=torch.bool, device="cuda")
+
     def create_from_pcd(self, pcd, spatial_lr_scale: float):
         super().create_from_pcd(pcd, spatial_lr_scale)
         self._unc = nn.Parameter(self._zeros_unc(self._xyz.shape[0]).requires_grad_(True))
+        self.unc_observed = self._false_obs(self._xyz.shape[0])
 
     def training_setup(self, training_args):
         super().training_setup(training_args)
         self.optimizer.add_param_group({'params': [self._unc], 'lr': self.unc_lr, "name": "unc"})
 
     def capture(self):
-        return super().capture() + (self._unc,)
+        return super().capture() + (self._unc, self.unc_observed)
 
     def restore(self, model_args, training_args):
         # _unc must exist before training_setup builds the optimizer groups
-        self._unc = model_args[-1]
-        super().restore(model_args[:-1], training_args)
+        self._unc = model_args[-2]
+        self.unc_observed = model_args[-1]
+        super().restore(model_args[:-2], training_args)
 
     # ---- ply io ----
     def construct_list_of_attributes(self):
-        return super().construct_list_of_attributes() + ['unc']
+        return super().construct_list_of_attributes() + ['unc', 'unc_observed']
 
     def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
@@ -103,10 +122,11 @@ class GaussianModelWithUnc(GaussianModel):
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
         unc = self._unc.detach().cpu().numpy()
+        observed = self.unc_observed.float()[:, None].cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, unc), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, unc, observed), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -121,6 +141,11 @@ class GaussianModelWithUnc(GaussianModel):
         else:
             unc = self._zeros_unc(self._xyz.shape[0])
         self._unc = nn.Parameter(unc.requires_grad_(True))
+        if 'unc_observed' in names:
+            obs = np.asarray(plydata.elements[0]['unc_observed']) > 0.5
+            self.unc_observed = torch.tensor(obs, dtype=torch.bool, device="cuda")
+        else:
+            self.unc_observed = self._false_obs(self._xyz.shape[0])
 
     # ---- prune / densify: same as GaussianModel, plus _unc ----
     def prune_points(self, mask):
@@ -134,15 +159,19 @@ class GaussianModelWithUnc(GaussianModel):
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         self._unc = optimizable_tensors["unc"]
+        self.unc_observed = self.unc_observed[valid_points_mask]
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
 
     def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities,
-                              new_scaling, new_rotation, new_unc=None):
+                              new_scaling, new_rotation, new_unc=None, new_observed=None):
         if new_unc is None:  # e.g. add_random_gaussians
             new_unc = self._zeros_unc(new_xyz.shape[0])
+        if new_observed is None:
+            new_observed = self._false_obs(new_xyz.shape[0])
+        self.unc_observed = torch.cat((self.unc_observed, new_observed), dim=0)
         d = {"xyz": new_xyz,
              "f_dc": new_features_dc,
              "f_rest": new_features_rest,
@@ -183,9 +212,10 @@ class GaussianModelWithUnc(GaussianModel):
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N, 1, 1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N, 1)
         new_unc = self._unc[selected_pts_mask].repeat(N, 1)  # children inherit s
+        new_observed = self.unc_observed[selected_pts_mask].repeat(N)
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity,
-                                   new_scaling, new_rotation, new_unc)
+                                   new_scaling, new_rotation, new_unc, new_observed)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -201,17 +231,25 @@ class GaussianModelWithUnc(GaussianModel):
                                    self._opacity[selected_pts_mask],
                                    self._scaling[selected_pts_mask],
                                    self._rotation[selected_pts_mask],
-                                   self._unc[selected_pts_mask])
+                                   self._unc[selected_pts_mask],
+                                   self.unc_observed[selected_pts_mask])
 
 
 # ---------------------------------------------------------------------------
 # Confidence rendering (Eq 9), geometry detached, no CUDA changes
 # ---------------------------------------------------------------------------
-def render_confidence(viewpoint_camera, pc: GaussianModelWithUnc, pipe, scaling_modifier=1.0, eps=1e-3):
-    """Returns C_hat (H,W) and accumulated opacity (H,W).
+def render_confidence(viewpoint_camera, pc: GaussianModelWithUnc, pipe, scaling_modifier=1.0, eps=1e-3,
+                      for_vis=False, probe=None):
+    """Returns C_hat (H,W), accumulated opacity (H,W) and the probe map (H,W).
 
     Only pc._unc receives gradient: xyz, opacity, scale, rotation are detached
     and means2D is a fresh tensor, so densification statistics are untouched.
+    for_vis=True renders never-supervised Gaussians with confidence c_min
+    (u = u_max); use it only for evaluation, never for the loss.
+    probe: optional (N,1) zeros tensor with requires_grad, rendered into channel 2.
+    Its value is 0 everywhere, but d(sum of probe map over the mask)/d(probe_i) is
+    the total blending weight of Gaussian i on supervised pixels. This marks which
+    Gaussians are observed, independent of whether C_hat hits its clamp.
     """
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
@@ -242,7 +280,10 @@ def render_confidence(viewpoint_camera, pc: GaussianModelWithUnc, pipe, scaling_
         rotations = pc.get_rotation.detach()
 
     gamma = pc.get_confidence  # (N,1), carries grad to _unc
-    colors = torch.cat([gamma, torch.ones_like(gamma), torch.zeros_like(gamma)], dim=1)
+    if for_vis:
+        gamma = 1.0 / pc.get_uncertainty
+    third = probe if probe is not None else torch.zeros_like(gamma)
+    colors = torch.cat([gamma, torch.ones_like(gamma), third], dim=1)
 
     out, _, _ = rasterizer(
         means3D=means3D,
@@ -256,7 +297,7 @@ def render_confidence(viewpoint_camera, pc: GaussianModelWithUnc, pipe, scaling_
 
     acc = out[1]  # sum_i a_i T_i = 1 - T_final
     c_hat = out[0] / acc.detach().clamp_min(eps)
-    return c_hat, acc.detach()
+    return c_hat, acc.detach(), out[2]
 
 
 # ---------------------------------------------------------------------------
@@ -264,16 +305,17 @@ def render_confidence(viewpoint_camera, pc: GaussianModelWithUnc, pipe, scaling_
 # ---------------------------------------------------------------------------
 @torch.no_grad()
 def compute_vcurf_target(view, gaussians, pipe, background, n_vcam=6, r_scale=0.1, beta=0.075,
-                         max_invalid=None, min_fg_pixels=100, eps=1e-12):
+                         min_vcam_views=2, min_fg_pixels=100, eps=1e-12):
     """Returns (D_tilde (H,W), valid (H,W) bool) or None.
 
     D per pixel = min over virtual cams of depth_l2 / median + min of rgb_l2 / median,
-    following active/VC_sel.py. Pixels where more than max_invalid virtual cams fail
-    to warp (default: all of them) or background pixels are invalid.
+    following active/VC_sel.py.
+    Supervision mask: a pixel is valid only if it is foreground and at least
+    min_vcam_views virtual cams see it (warp succeeds). Other pixels (mostly image
+    borders) carry no information: they are excluded from the loss, so no gradient
+    flows from them, and Gaussians only seen there keep u = u_max.
     D_tilde = beta * D / median(D) so the optimal C_hat is 1 at the median pixel.
     """
-    if max_invalid is None:
-        max_invalid = n_vcam - 1
 
     render_pkg = render(view, gaussians, pipe, background)
     depth = render_pkg['depth'].squeeze()  # (H,W)
@@ -314,7 +356,8 @@ def compute_vcurf_target(view, gaussians, pipe, background, n_vcam=6, r_scale=0.
     min_depth_l2 = depth_l2.min(0).values.squeeze(0)  # (H,W)
     min_rgb_l2 = rgb_l2.min(0).values.squeeze(0)
 
-    valid = fg & (invalid.sum(0).squeeze(0) <= max_invalid)
+    n_seen = n_vcam - invalid.sum(0).squeeze(0)  # virtual cams that see each pixel
+    valid = fg & (n_seen >= min_vcam_views)
     if valid.sum() < min_fg_pixels:
         return None
 
@@ -353,13 +396,17 @@ class VcurfTargetCache:
 
 
 def uncertainty_loss(c_hat, acc, D_tilde, valid, beta, c_min=1e-3, c_max=5.0, min_acc=0.5):
-    """Eq 10 with VCURF as the error term. Returns None if no pixel is usable."""
+    """Eq 10 with VCURF as the error term, on supervised pixels only.
+
+    Returns (loss, mask) or (None, mask) if no pixel is usable. Pixels outside the
+    mask contribute nothing, so they send no gradient to any Gaussian.
+    """
     mask = valid & (acc > min_acc)
     if mask.sum() == 0:
-        return None
+        return None, mask
     c = torch.clamp(c_hat, min=c_min, max=c_max)
     per_pixel = c * D_tilde - beta * torch.log(c)
-    return per_pixel[mask].mean()
+    return per_pixel[mask].mean(), mask
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +429,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     cache = VcurfTargetCache(refresh_every=uargs.vcurf_refresh_every)
     compute_fn = lambda v: compute_vcurf_target(v, gaussians, pipe, background,
                                                 n_vcam=uargs.n_vcam, r_scale=uargs.r_scale,
-                                                beta=uargs.unc_beta)
+                                                beta=uargs.unc_beta, min_vcam_views=uargs.unc_min_vcam_views)
 
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
@@ -437,13 +484,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             tgt = cache.get(viewpoint_cam, iteration, compute_fn)
             if tgt is not None:
                 D_tilde, valid = tgt
-                c_hat, acc = render_confidence(viewpoint_cam, gaussians, pipe)
-                L_u = uncertainty_loss(c_hat, acc, D_tilde, valid, beta=uargs.unc_beta,
-                                       min_acc=uargs.unc_min_acc)
+                probe = torch.zeros((gaussians.get_xyz.shape[0], 1), device="cuda", requires_grad=True)
+                c_hat, acc, probe_map = render_confidence(viewpoint_cam, gaussians, pipe, probe=probe)
+                L_u, sup_mask = uncertainty_loss(c_hat, acc, D_tilde, valid, beta=uargs.unc_beta,
+                                                 c_min=gaussians.c_min, min_acc=uargs.unc_min_acc)
                 if L_u is not None:
-                    loss = loss + uargs.unc_lambda * L_u
+                    # probe term is exactly 0; it only exposes per-Gaussian weight on supervised pixels
+                    loss = loss + uargs.unc_lambda * L_u + probe_map[sup_mask].sum()
+                else:
+                    probe = None
 
         loss.backward()
+        if L_u is not None and probe is not None and probe.grad is not None:
+            gaussians.mark_observed(probe.grad.squeeze(-1), uargs.unc_obs_weight)
 
         iter_end.record()
 
@@ -526,9 +579,10 @@ def training_report(tb_writer, iteration, Ll1, loss, L_u, l1_loss, elapsed, test
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         # rendered uncertainty 1/C_hat, scaled for display
-                        c_hat, acc = render_confidence(viewpoint, scene.gaussians, renderArgs[0])
-                        u_map = (1.0 / c_hat.clamp(1e-3, 5.0)) * (acc > 0.5)
-                        u_map = (u_map / (u_map.max() + 1e-8)).clamp(0, 1)
+                        c_hat, acc, _ = render_confidence(viewpoint, scene.gaussians, renderArgs[0], for_vis=True)
+                        # log-scaled u in [0,1]: 0 -> u <= 1 (typical), 1 -> u_max (never supervised)
+                        u_map = torch.log(1.0 / c_hat.clamp(1e-3, 5.0)) / math.log(scene.gaussians.u_max)
+                        u_map = (u_map.clamp(0, 1) * (acc > 0.5)).clamp(0, 1)
                         tb_writer.add_images(config['name'] + "_view_{}/uncertainty".format(viewpoint.image_name), u_map[None, None], global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
@@ -573,6 +627,10 @@ if __name__ == "__main__":
     parser.add_argument('--vcurf_refresh_every', type=int, default=500, help="recompute a view's VCURF target after this many iters; 0 = every time")
     parser.add_argument('--n_vcam', type=int, default=6)
     parser.add_argument('--r_scale', type=float, default=0.1)
+    parser.add_argument('--unc_obs_weight', type=float, default=1e-3,
+                        help="a Gaussian counts as observed once its summed weight on supervised pixels exceeds this")
+    parser.add_argument('--unc_min_vcam_views', type=int, default=2,
+                        help="supervise a pixel only if at least this many virtual cams see it")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
