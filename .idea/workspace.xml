@@ -5,9 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4e678147-60f0-42a2-a0e5-b25e63b887c0" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/webServers.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/webServers.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/tant_v20.sh" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/tant_v20.sh" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/tat_train_u.sh" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -15,7 +13,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="3716" />
+    <option name="cachedIndexableFilesCount" value="3718" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="Git.Settings">
@@ -54,7 +52,7 @@
     "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
     "git-widget-placeholder": "dev",
     "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "/Users/liyanchen/Desktop/projects/FisherRF",
+    "last_opened_file_path": "/Users/liyanchen/Desktop/projects/FisherRF/scripts",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -67,6 +65,7 @@
 }]]></component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/scripts" />
       <recent name="D:\research\projects\FisherRF\scripts" />
     </key>
   </component>
@@ -127,6 +126,7 @@
       <workItem from="1758311592830" duration="2485000" />
       <workItem from="1758572565512" duration="881000" />
       <workItem from="1792521888308" duration="6587000" />
+      <workItem from="1792708792508" duration="352000" />
     </task>
     <servers />
   </component>
