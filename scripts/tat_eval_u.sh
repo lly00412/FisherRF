@@ -12,5 +12,5 @@ python render_uncertainty_w_u.py -s $DATASET_PATH/$OBJ -m $EXP_PATH/$OBJ \
     --vcurf_n_vcam 6 --vcurf_r_scale 0.1 --seed 0
 
 # After retraining with --eval, evaluate on the held-out test set:
-# python render_uncertainty_w_u.py -s $DATASET_PATH/$OBJ -m $EXP_PATH/$OBJ --eval \
+# python render_uncertainty_w_u.py -s $DATASET_PATH/$OBJ -m ./output/tandt_db_train_u_eval/$OBJ --eval \
 #     --split test --vcurf_n_vcam 6 --vcurf_r_scale 0.1 --seed 0

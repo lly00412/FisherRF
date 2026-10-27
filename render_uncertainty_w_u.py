@@ -193,6 +193,11 @@ if __name__ == "__main__":
     parser.add_argument("--vcurf_n_vcam", default=6, type=int, help="virtual cameras for the VCURF baseline")
     parser.add_argument("--vcurf_r_scale", default=0.1, type=float, help="sphere radius / median depth for VCURF")
     args = get_combined_args(parser)
+    # get_combined_args drops command-line args whose value is None, so options
+    # left at a None default are missing from args; restore them
+    for k in ("override_idxs", "test_idxs"):
+        if not hasattr(args, k):
+            setattr(args, k, None)
     print("Evaluating " + args.model_path)
 
     safe_state(args.quiet, seed=args.seed)
