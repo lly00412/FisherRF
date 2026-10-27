@@ -5,7 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4e678147-60f0-42a2-a0e5-b25e63b887c0" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/scripts/tat_train_u.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/deployment.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/deployment.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/render_uncertainty_w_u.py" beforeDir="false" afterPath="$PROJECT_DIR$/render_uncertainty_w_u.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/tat_train_u.sh" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/tat_train_u.sh" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

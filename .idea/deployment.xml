@@ -5,7 +5,7 @@
       <paths name="viper">
         <serverdata>
           <mappings>
-            <mapping deploy="/Data2/liyan/FisherRF" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/mnt/Data2/liyan/FisherRF" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

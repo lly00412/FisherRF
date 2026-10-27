@@ -11,6 +11,10 @@
 #   - AUC (compute_roc) and AUSE (compute_ause) of each method, with rgb_err as the
 #     oracle, on foreground pixels (depth > 0), same as the existing scripts
 #   - extra: AUSE of ours using VCURF as the oracle (how well u reproduces VCURF)
+#   - depth error: T&T / Deep Blending have no GT depth, so the COLMAP sparse points
+#     (<source_path>/sparse/0) projected into each view are the reference depth.
+#     depth_err = |rendered depth / acc - COLMAP depth| at those pixels, and AUC / AUSE
+#     of each method are computed with depth_err as the oracle (files *_depth*).
 # Output layout follows render_uncertainty_w_Vcams_v2.py, under <model_path>/<save_dir>/:
 #   renders/  depth/  error/  eval_seed_<s>/  roc_seed_<s>/
 #
@@ -26,6 +30,8 @@ import os
 import json
 from argparse import ArgumentParser, Namespace
 from os import makedirs
+
+import struct
 
 import numpy as np
 import torch
@@ -44,6 +50,87 @@ from utils.uncert_utils import compute_roc, compute_ause, plot_roc, write_auc
 from render_uncertainty_w_Vcams_and_fisherRF import render_uncertainty
 from render_uncertainty_w_Vcams_v2 import plot_unmap
 from train_w_uncertainty import GaussianModelWithUnc, render_confidence
+from scene.colmap_loader import (read_extrinsics_binary, read_extrinsics_text,
+                                 read_intrinsics_binary, read_intrinsics_text,
+                                 read_next_bytes, qvec2rotmat)
+
+
+# ---------------------------------------------------------------------------
+# Sparse reference depth from the COLMAP model
+# ---------------------------------------------------------------------------
+def read_points3D_with_ids(sparse_dir):
+    """dict point3D_id -> (xyz (3,), reprojection error). bin first, txt fallback."""
+    pts = {}
+    bin_path = os.path.join(sparse_dir, "points3D.bin")
+    txt_path = os.path.join(sparse_dir, "points3D.txt")
+    if os.path.exists(bin_path):
+        with open(bin_path, "rb") as fid:
+            n = read_next_bytes(fid, 8, "Q")[0]
+            for _ in range(n):
+                p = read_next_bytes(fid, 43, "QdddBBBd")
+                track_len = read_next_bytes(fid, 8, "Q")[0]
+                fid.seek(8 * track_len, 1)  # skip the track (image_id, point2D_idx) pairs
+                pts[p[0]] = (np.array(p[1:4], dtype=np.float64), p[7])
+    elif os.path.exists(txt_path):
+        with open(txt_path) as fid:
+            for line in fid:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                e = line.split()
+                pts[int(e[0])] = (np.array(list(map(float, e[1:4]))), float(e[7]))
+    else:
+        raise FileNotFoundError(f"no points3D.bin / points3D.txt in {sparse_dir}")
+    return pts
+
+
+class ColmapSparseDepth:
+    """Projects the COLMAP sparse points seen by each image into that image."""
+
+    def __init__(self, source_path, max_reproj_err=2.0):
+        sparse_dir = os.path.join(source_path, "sparse/0")
+        try:
+            images = read_extrinsics_binary(os.path.join(sparse_dir, "images.bin"))
+            cams = read_intrinsics_binary(os.path.join(sparse_dir, "cameras.bin"))
+        except Exception:
+            images = read_extrinsics_text(os.path.join(sparse_dir, "images.txt"))
+            cams = read_intrinsics_text(os.path.join(sparse_dir, "cameras.txt"))
+        pts = read_points3D_with_ids(sparse_dir)
+        self.max_reproj_err = max_reproj_err
+        self.points = pts
+        self.cams = cams
+        # same image name as scene/dataset_readers.py
+        self.images = {os.path.basename(im.name).split(".")[0]: im for im in images.values()}
+        print(f"[depth] COLMAP model: {len(self.images)} images, {len(pts)} points from {sparse_dir}")
+
+    def __call__(self, view):
+        """(H,W) float32 tensor of reference depth (0 = no point), or None."""
+        im = self.images.get(view.image_name)
+        if im is None:
+            return None
+        H, W = view.image_height, view.image_width
+        cam = self.cams[im.camera_id]
+        ids = im.point3D_ids
+        keep = ids >= 0
+        xys, ids = im.xys[keep], ids[keep]
+        sel = [(i, k) for i, k in enumerate(ids) if k in self.points]
+        if not sel:
+            return None
+        rows, ids = zip(*sel)
+        xys = xys[list(rows)]
+        X = np.stack([self.points[k][0] for k in ids])
+        err = np.array([self.points[k][1] for k in ids])
+        z = (X @ qvec2rotmat(im.qvec).T + im.tvec)[:, 2]
+        u = np.floor(xys[:, 0] * W / cam.width).astype(np.int64)
+        v = np.floor(xys[:, 1] * H / cam.height).astype(np.int64)
+        ok = (z > 0) & (u >= 0) & (u < W) & (v >= 0) & (v < H)
+        if self.max_reproj_err > 0:
+            ok &= err <= self.max_reproj_err
+        u, v, z = u[ok], v[ok], z[ok]
+        depth = np.zeros((H, W), dtype=np.float32)
+        order = np.argsort(-z)  # write far first, so the nearest point wins per pixel
+        depth[v[order], u[order]] = z[order]
+        return torch.from_numpy(depth).cuda()
 
 
 def vcurf_key(n_vcam, r_scale):
@@ -101,6 +188,17 @@ def evaluate(dataset, iteration, pipeline, args):
 
     opt_label = 'rgb_err'
     ROCs, AUCs, AUSEs = {}, {}, {}
+    # depth-error evaluation against COLMAP sparse depth
+    depth_ref = None
+    if not args.no_depth_eval:
+        try:
+            depth_ref = ColmapSparseDepth(dataset.source_path, args.depth_max_reproj_err)
+        except Exception as e:
+            print(f"[depth] skip depth-error evaluation: {e}")
+    d_opt_label = 'depth_err'
+    d_names = {'depth_err': 'depth_err', vkey: vkey, 'ours_u': 'ours_u'}
+    D_ROCs, D_AUCs, D_AUSEs = {}, {}, {}
+    depth_skipped = []
     agree_ause = []  # AUSE of ours with VCURF as oracle
     per_view = []
 
@@ -130,8 +228,43 @@ def evaluate(dataset, iteration, pipeline, args):
                  opt_label=opt_label, intervals=20)
         write_auc(AUC_dict=aucs, txt_name=os.path.join(roc_dir, '{0:05d}'.format(idx) + "auc.txt"))
         write_auc(AUC_dict=auses, txt_name=os.path.join(roc_dir, '{0:05d}'.format(idx) + "ause.txt"))
-        per_view.append({"idx": idx, "image": view.image_name,
-                         "auc": aucs, "ause": auses, "ours_vs_vcurf_ause": a})
+        pv = {"idx": idx, "image": view.image_name,
+              "auc": aucs, "ause": auses, "ours_vs_vcurf_ause": a}
+
+        # ---- depth error vs COLMAP sparse depth ----
+        gt_depth = depth_ref(view) if depth_ref is not None else None
+        depth_err_map = None
+        if gt_depth is not None:
+            acc_s = acc.squeeze()
+            pred_depth = depth.squeeze() / acc_s.clamp(min=1e-6)  # depth is sum(alpha*T*z)
+            d_mask = mask & (gt_depth > 0) & (acc_s > args.depth_min_acc)
+            n_pts = int(d_mask.sum())
+            depth_err_map = torch.zeros_like(gt_depth)
+            depth_err_map[d_mask] = (pred_depth[d_mask] - gt_depth[d_mask]).abs()
+            if n_pts >= args.depth_min_points:
+                d_maps = {'depth_err': depth_err_map, vkey: maps[vkey], 'ours_u': u_map}
+                d_values = {k: d_maps[k].squeeze()[d_mask].flatten().float() for k in d_maps}
+                d_rocs, d_aucs, d_auses = {}, {}, {}
+                for k in d_values:
+                    label = d_names[k]
+                    roc, auc = compute_roc(opt=d_values[d_opt_label], est=d_values[k], intervals=20)
+                    _, ause = compute_ause(opt=d_values[d_opt_label], est=d_values[k], intervals=100)
+                    d_rocs[label], d_aucs[label], d_auses[label] = np.array(roc), auc, ause
+                    D_ROCs.setdefault(label, []).append(roc)
+                    D_AUCs.setdefault(label, []).append(auc)
+                    D_AUSEs.setdefault(label, []).append(ause)
+                plot_roc(ROC_dict=dict(d_rocs), fig_name=os.path.join(roc_dir, '{0:05d}'.format(idx) + "_depth.jpg"),
+                         opt_label=d_opt_label, intervals=20)
+                write_auc(AUC_dict=d_aucs, txt_name=os.path.join(roc_dir, '{0:05d}'.format(idx) + "depth_auc.txt"))
+                write_auc(AUC_dict=d_auses, txt_name=os.path.join(roc_dir, '{0:05d}'.format(idx) + "depth_ause.txt"))
+                pv.update({"depth_auc": d_aucs, "depth_ause": d_auses, "depth_n_points": n_pts,
+                           "depth_mae": float(d_values['depth_err'].mean())})
+            else:
+                depth_skipped.append(view.image_name)
+                pv["depth_n_points"] = n_pts
+        else:
+            depth_skipped.append(view.image_name)
+        per_view.append(pv)
 
         # images, same naming / colormap / quantile clipping as v2
         mask_cpu = mask.cpu()
@@ -151,7 +284,9 @@ def evaluate(dataset, iteration, pipeline, args):
                  ours_u=u_map.cpu().numpy(),
                  acc=acc.cpu().numpy(),
                  depth=depth.squeeze().cpu().numpy(),
-                 mask=mask_cpu.numpy())
+                 mask=mask_cpu.numpy(),
+                 colmap_depth=(gt_depth.cpu().numpy() if gt_depth is not None else np.zeros(0)),
+                 depth_err=(depth_err_map.cpu().numpy() if depth_err_map is not None else np.zeros(0)))
 
     # summary over test views, same file names as v2 (test.png / test.txt / testause.txt)
     mean_roc = {k: np.array(v).mean(0) for k, v in ROCs.items()}
@@ -164,6 +299,16 @@ def evaluate(dataset, iteration, pipeline, args):
                "vcurf": {"n_vcam": args.vcurf_n_vcam, "r_scale": args.vcurf_r_scale},
                "oracle": opt_label, "mean_auc": mean_auc, "mean_ause": mean_ause,
                "ours_vs_vcurf_ause_mean": float(np.mean(agree_ause)), "per_view": per_view}
+    if D_AUCs:
+        d_mean_roc = {k: np.array(v).mean(0) for k, v in D_ROCs.items()}
+        d_mean_auc = {k: float(np.mean(v)) for k, v in D_AUCs.items()}
+        d_mean_ause = {k: float(np.mean(v)) for k, v in D_AUSEs.items()}
+        plot_roc(ROC_dict=dict(d_mean_roc), fig_name=os.path.join(roc_dir, f"{args.split}_depth.png"),
+                 opt_label=d_opt_label, intervals=20)
+        write_auc(AUC_dict=d_mean_auc, txt_name=os.path.join(roc_dir, f"{args.split}_depth.txt"))
+        write_auc(AUC_dict=d_mean_ause, txt_name=os.path.join(roc_dir, f"{args.split}_depthause.txt"))
+        summary.update({"depth_oracle": "depth_err vs COLMAP sparse points", "depth_n_views": len(D_AUCs[d_opt_label]),
+                        "depth_skipped_views": depth_skipped, "depth_mean_auc": d_mean_auc, "depth_mean_ause": d_mean_ause})
     with open(os.path.join(roc_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
 
@@ -172,6 +317,14 @@ def evaluate(dataset, iteration, pipeline, args):
     for k in mean_auc:
         print(f"{k:<24}{mean_auc[k]:>12.6f}{mean_ause[k]:>12.6f}")
     print(f"AUSE of ours w.r.t. VCURF: {np.mean(agree_ause):.6f}")
+    if D_AUCs:
+        print(f"\n(oracle: depth_err vs COLMAP sparse depth, {len(D_AUCs[d_opt_label])} views"
+              f"{', skipped ' + str(len(depth_skipped)) if depth_skipped else ''})")
+        print(f"{'method':<24}{'AUC':>12}{'AUSE':>12}")
+        for k in d_mean_auc:
+            print(f"{k:<24}{d_mean_auc[k]:>12.6f}{d_mean_ause[k]:>12.6f}")
+    else:
+        print("\n[depth] no depth-error results (no COLMAP model or too few points)")
     print(f"Saved to {out_dir}")
 
 
@@ -192,6 +345,13 @@ if __name__ == "__main__":
     # names differ from the training args so cfg_args cannot override them
     parser.add_argument("--vcurf_n_vcam", default=6, type=int, help="virtual cameras for the VCURF baseline")
     parser.add_argument("--vcurf_r_scale", default=0.1, type=float, help="sphere radius / median depth for VCURF")
+    parser.add_argument("--no_depth_eval", action="store_true", help="skip the depth-error evaluation")
+    parser.add_argument("--depth_max_reproj_err", default=2.0, type=float,
+                        help="drop COLMAP points with larger reprojection error (px); <=0 keeps all")
+    parser.add_argument("--depth_min_points", default=50, type=int,
+                        help="skip depth AUC/AUSE of a view with fewer valid sparse points")
+    parser.add_argument("--depth_min_acc", default=0.5, type=float,
+                        help="only pixels with rendered opacity above this are used for depth error")
     args = get_combined_args(parser)
     # get_combined_args drops command-line args whose value is None, so options
     # left at a None default are missing from args; restore them
