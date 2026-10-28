@@ -136,6 +136,12 @@ class GaussianModelWithUnc(GaussianModel):
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
+        # second copy colored by uncertainty (plasma colormap), standard 3DGS format
+        try:
+            from export_uncertainty_ply import export_uncertainty_ply
+            export_uncertainty_ply(path)
+        except Exception as e:
+            print(f"[warn] uncertainty point cloud not saved: {e}")
 
     def load_ply(self, path):
         super().load_ply(path)
