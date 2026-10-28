@@ -5,7 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4e678147-60f0-42a2-a0e5-b25e63b887c0" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/train_w_uncertainty.py" beforeDir="false" afterPath="$PROJECT_DIR$/train_w_uncertainty.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/render_uncertainty_w_u.py" beforeDir="false" afterPath="$PROJECT_DIR$/render_uncertainty_w_u.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/tat_train_u.sh" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/tat_train_u.sh" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -128,7 +130,7 @@
       <workItem from="1792521888308" duration="6587000" />
       <workItem from="1792708792508" duration="352000" />
       <workItem from="1793085138700" duration="2676000" />
-      <workItem from="1793216224998" duration="1627000" />
+      <workItem from="1793216224998" duration="6572000" />
     </task>
     <servers />
   </component>

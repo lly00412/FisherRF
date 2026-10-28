@@ -18,10 +18,18 @@
 # Output layout follows render_uncertainty_w_Vcams_v2.py, under <model_path>/<save_dir>/:
 #   renders/  depth/  error/  eval_seed_<s>/  roc_seed_<s>/
 #
-# The model must be trained with --eval, otherwise there is no test set.
+# Test views:
+#   --split test      the llffhold test views of the training set (model trained with --eval)
+#   --split nvs_test  a separate test set in the same COLMAP frame (e.g. TnT GT_data/<scene>/nvs_test):
+#                     cameras from <test_source>/sparse/0, images from <test_source>/images, only the views in
+#                     the "test" list of <test_source>/split_sparse_20.json, and dense GT depth from
+#                     <test_source>/gt_depth/<view>.npy (made by gt_depthmaps_standalone.py, COLMAP frame, NaN = none)
+#   --split train     quick check on training views
 #
-# Example:
+# Examples:
 #   python render_uncertainty_w_u.py -m ./output/tandt_db_train_u/train --eval
+#   python render_uncertainty_w_u.py -m ./output/tnt_sparse/Barn --split nvs_test \
+#       --test_source /mnt/Data2/nerf_datasets/tnt_dpgs_gt_data/GT_data/Barn/nvs_test
 #
 # This file does not modify any existing module.
 #
@@ -50,6 +58,8 @@ from utils.uncert_utils import compute_roc, compute_ause, plot_roc, write_auc
 from render_uncertainty_w_Vcams_and_fisherRF import render_uncertainty
 from render_uncertainty_w_Vcams_v2 import plot_unmap
 from train_w_uncertainty import GaussianModelWithUnc, render_confidence
+from scene.dataset_readers import readColmapCameras
+from utils.camera_utils import cameraList_from_camInfos
 from scene.colmap_loader import (read_extrinsics_binary, read_extrinsics_text,
                                  read_intrinsics_binary, read_intrinsics_text,
                                  read_next_bytes, qvec2rotmat)
@@ -146,6 +156,54 @@ def render_ours(view, gaussians, pipeline):
     return u, acc
 
 
+def load_nvs_test_views(test_source, images, split_file, split, resolution, data_device):
+    """Cameras of a separate test set (same COLMAP frame as training), loaded like the training cameras."""
+    sparse = os.path.join(test_source, "sparse/0")
+    if os.path.isfile(os.path.join(sparse, "images.bin")):
+        extr = read_extrinsics_binary(os.path.join(sparse, "images.bin"))
+        intr = read_intrinsics_binary(os.path.join(sparse, "cameras.bin"))
+    else:
+        extr = read_extrinsics_text(os.path.join(sparse, "images.txt"))
+        intr = read_intrinsics_text(os.path.join(sparse, "cameras.txt"))
+    stem = lambda n: os.path.splitext(os.path.basename(str(n)))[0]
+    image_dir = os.path.join(test_source, images)
+    if split_file and os.path.isfile(split_file):
+        wanted = {stem(n) for n in json.load(open(split_file))[split]}
+        print(f"[nvs_test] {len(wanted)} '{split}' views from {split_file}")
+    else:  # no split file: every image in the test image folder
+        wanted = {stem(n) for n in os.listdir(image_dir)}
+        print(f"[nvs_test] no split file, using the {len(wanted)} images in {image_dir}")
+    extr = {k: e for k, e in extr.items() if stem(e.name) in wanted}
+    missing = sorted(wanted - {stem(e.name) for e in extr.values()})
+    if missing:
+        print(f"[nvs_test] no camera in {sparse} for: {missing}")
+    cam_infos = sorted(readColmapCameras(cam_extrinsics=extr, cam_intrinsics=intr, images_folder=image_dir),
+                       key=lambda c: c.image_name)
+    # same resizing as training (utils/camera_utils.py loadCam)
+    return cameraList_from_camInfos(cam_infos, 1.0, Namespace(resolution=resolution, data_device=data_device))
+
+
+class GtDepthMaps:
+    """Dense GT depth <depth_dir>/<view>.npy (NaN / <= 0 = no surface), as a (H,W) tensor with 0 = invalid."""
+
+    def __init__(self, depth_dir):
+        self.depth_dir = depth_dir
+        print(f"[depth] dense GT depth from {depth_dir}")
+
+    def __call__(self, view):
+        path = os.path.join(self.depth_dir, view.image_name + ".npy")
+        if not os.path.isfile(path):
+            return None
+        d = np.load(path).astype(np.float32).squeeze()
+        d = np.where(np.isfinite(d) & (d > 0), d, 0.0).astype(np.float32)
+        d = torch.from_numpy(d).cuda()
+        H, W = view.image_height, view.image_width
+        if d.shape != (H, W):  # e.g. depth made at another --resolution: nearest resize to the render size
+            print(f"[depth] {view.image_name}: GT depth {tuple(d.shape)} resized to {(H, W)}")
+            d = torch.nn.functional.interpolate(d[None, None], size=(H, W), mode="nearest")[0, 0]
+        return d
+
+
 def evaluate(dataset, iteration, pipeline, args):
     gaussians = GaussianModelWithUnc(dataset.sh_degree)
     if args.override_idxs is not None:  # same special test split as render_uncertainty_w_Vcams_v2.py
@@ -160,6 +218,16 @@ def evaluate(dataset, iteration, pipeline, args):
         # These views were seen in training, so the numbers are NOT a held-out evaluation.
         test_views = scene.getTrainCameras()[::args.train_every]
         print(f"[split=train] evaluating {len(test_views)} TRAINING views (not held out)")
+    elif args.split == "nvs_test":
+        if not args.test_source:
+            raise RuntimeError("--split nvs_test needs --test_source (e.g. .../GT_data/<scene>/nvs_test)")
+        split_file = args.test_split_file or os.path.join(args.test_source, "split_sparse_20.json")
+        test_views = load_nvs_test_views(args.test_source, args.test_images, split_file, args.test_split,
+                                         args.test_resolution, dataset.data_device)
+        if not test_views:
+            raise RuntimeError(f"no test views found in {args.test_source}")
+        print(f"[nvs_test] evaluating {len(test_views)} views, "
+              f"{test_views[0].image_width}x{test_views[0].image_height}")
     else:
         test_views = scene.getTestCameras()
         if not test_views:
@@ -189,12 +257,21 @@ def evaluate(dataset, iteration, pipeline, args):
     opt_label = 'rgb_err'
     ROCs, AUCs, AUSEs = {}, {}, {}
     # depth-error evaluation against COLMAP sparse depth
-    depth_ref = None
+    depth_ref, depth_ref_name = None, None
     if not args.no_depth_eval:
-        try:
-            depth_ref = ColmapSparseDepth(dataset.source_path, args.depth_max_reproj_err)
-        except Exception as e:
-            print(f"[depth] skip depth-error evaluation: {e}")
+        gt_depth_dir = args.gt_depth_dir or (os.path.join(args.test_source, "gt_depth")
+                                             if args.split == "nvs_test" else None)
+        if gt_depth_dir and os.path.isdir(gt_depth_dir):
+            depth_ref, depth_ref_name = GtDepthMaps(gt_depth_dir), f"dense GT depth ({gt_depth_dir})"
+        else:
+            if gt_depth_dir:
+                print(f"[depth] {gt_depth_dir} not found, falling back to COLMAP sparse depth")
+            try:  # sparse reference: COLMAP points of the model the test views come from
+                src = args.test_source if args.split == "nvs_test" else dataset.source_path
+                depth_ref = ColmapSparseDepth(src, args.depth_max_reproj_err)
+                depth_ref_name = f"COLMAP sparse points ({src})"
+            except Exception as e:
+                print(f"[depth] skip depth-error evaluation: {e}")
     d_opt_label = 'depth_err'
     d_names = {'depth_err': 'depth_err', vkey: vkey, 'ours_u': 'ours_u'}
     D_ROCs, D_AUCs, D_AUSEs = {}, {}, {}
@@ -241,6 +318,8 @@ def evaluate(dataset, iteration, pipeline, args):
             n_pts = int(d_mask.sum())
             depth_err_map = torch.zeros_like(gt_depth)
             depth_err_map[d_mask] = (pred_depth[d_mask] - gt_depth[d_mask]).abs()
+            if args.depth_err_type == "rel":
+                depth_err_map[d_mask] = depth_err_map[d_mask] / gt_depth[d_mask]
             if n_pts >= args.depth_min_points:
                 d_maps = {'depth_err': depth_err_map, vkey: maps[vkey], 'ours_u': u_map}
                 d_values = {k: d_maps[k].squeeze()[d_mask].flatten().float() for k in d_maps}
@@ -272,6 +351,9 @@ def evaluate(dataset, iteration, pipeline, args):
         torchvision.utils.save_image(pred_img.detach().clamp(0, 1), os.path.join(render_dir, f"{args.split}_{name}.png"))
         plot_unmap(depth.squeeze().detach().cpu(), mask_cpu, os.path.join(depth_dir, f"{name}.jpg"), cmap='magma', q=0.95)
         plot_unmap(maps['rgb_err'].squeeze().cpu(), mask_cpu, os.path.join(error_dir, f"{name}.jpg"), q=0.8)
+        if depth_err_map is not None and bool(((gt_depth > 0).cpu() & mask_cpu).any()):
+            plot_unmap(depth_err_map.cpu(), (gt_depth > 0).cpu() & mask_cpu,
+                       os.path.join(error_dir, f"{name}_depth_err.jpg"), q=0.95)
         plot_unmap(maps[vkey].squeeze().cpu(), mask_cpu,
                    os.path.join(eval_dir, f"vcurf_{args.vcurf_n_vcam}_vcams_{args.vcurf_r_scale}_med_{name}.jpg"), q=0.8)
         plot_unmap(u_map.cpu(), mask_cpu, os.path.join(eval_dir, f"ours_u_{name}.jpg"), q=0.8)
@@ -285,7 +367,7 @@ def evaluate(dataset, iteration, pipeline, args):
                  acc=acc.cpu().numpy(),
                  depth=depth.squeeze().cpu().numpy(),
                  mask=mask_cpu.numpy(),
-                 colmap_depth=(gt_depth.cpu().numpy() if gt_depth is not None else np.zeros(0)),
+                 ref_depth=(gt_depth.cpu().numpy() if gt_depth is not None else np.zeros(0)),
                  depth_err=(depth_err_map.cpu().numpy() if depth_err_map is not None else np.zeros(0)))
 
     # summary over test views, same file names as v2 (test.png / test.txt / testause.txt)
@@ -307,7 +389,7 @@ def evaluate(dataset, iteration, pipeline, args):
                  opt_label=d_opt_label, intervals=20)
         write_auc(AUC_dict=d_mean_auc, txt_name=os.path.join(roc_dir, f"{args.split}_depth.txt"))
         write_auc(AUC_dict=d_mean_ause, txt_name=os.path.join(roc_dir, f"{args.split}_depthause.txt"))
-        summary.update({"depth_oracle": "depth_err vs COLMAP sparse points", "depth_n_views": len(D_AUCs[d_opt_label]),
+        summary.update({"depth_oracle": f"{args.depth_err_type} depth error vs {depth_ref_name}", "depth_n_views": len(D_AUCs[d_opt_label]),
                         "depth_skipped_views": depth_skipped, "depth_mean_auc": d_mean_auc, "depth_mean_ause": d_mean_ause})
     with open(os.path.join(roc_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
@@ -318,7 +400,7 @@ def evaluate(dataset, iteration, pipeline, args):
         print(f"{k:<24}{mean_auc[k]:>12.6f}{mean_ause[k]:>12.6f}")
     print(f"AUSE of ours w.r.t. VCURF: {np.mean(agree_ause):.6f}")
     if D_AUCs:
-        print(f"\n(oracle: depth_err vs COLMAP sparse depth, {len(D_AUCs[d_opt_label])} views"
+        print(f"\n(oracle: {args.depth_err_type} depth error vs {depth_ref_name}, {len(D_AUCs[d_opt_label])} views"
               f"{', skipped ' + str(len(depth_skipped)) if depth_skipped else ''})")
         print(f"{'method':<24}{'AUC':>12}{'AUSE':>12}")
         for k in d_mean_auc:
@@ -339,8 +421,22 @@ if __name__ == "__main__":
     parser.add_argument("--override_idxs", default=None, type=str,
                         help="special test split from active.schema.override_test_idxs_dict (as in v2); default = training split")
     parser.add_argument("--save_dir", default="eval_u", type=str)
-    parser.add_argument("--split", default="test", choices=["test", "train"],
-                        help="test = held-out views (needs --eval); train = quick check on training views")
+    parser.add_argument("--split", default="test", choices=["test", "train", "nvs_test"],
+                        help="test = llffhold views (needs --eval); nvs_test = separate test set (--test_source); "
+                             "train = quick check on training views")
+    parser.add_argument("--test_source", default=None, type=str,
+                        help="nvs_test folder with sparse/0, images/, split json and gt_depth/")
+    parser.add_argument("--test_images", default="images", type=str, help="image folder inside --test_source")
+    parser.add_argument("--test_split_file", default=None, type=str,
+                        help="default: <test_source>/split_sparse_20.json (all images if it does not exist)")
+    parser.add_argument("--test_split", default="test", type=str, help="which list of the split file")
+    parser.add_argument("--test_resolution", default=2, type=int,
+                        help="resolution of the nvs_test views (like -r); 2 matches gt_depth from "
+                             "gt_depthmaps_standalone.py -r 2")
+    parser.add_argument("--gt_depth_dir", default=None, type=str,
+                        help="dense GT depth <view>.npy; default for nvs_test: <test_source>/gt_depth")
+    parser.add_argument("--depth_err_type", default="abs", choices=["abs", "rel"],
+                        help="depth error oracle: |d - d_gt| or |d - d_gt| / d_gt")
     parser.add_argument("--train_every", default=8, type=int, help="with --split train, use every N-th training view")
     # names differ from the training args so cfg_args cannot override them
     parser.add_argument("--vcurf_n_vcam", default=6, type=int, help="virtual cameras for the VCURF baseline")
@@ -355,7 +451,7 @@ if __name__ == "__main__":
     args = get_combined_args(parser)
     # get_combined_args drops command-line args whose value is None, so options
     # left at a None default are missing from args; restore them
-    for k in ("override_idxs", "test_idxs"):
+    for k in ("override_idxs", "test_idxs", "test_source", "test_split_file", "gt_depth_dir"):
         if not hasattr(args, k):
             setattr(args, k, None)
     print("Evaluating " + args.model_path)
