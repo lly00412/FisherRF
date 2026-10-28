@@ -669,8 +669,9 @@ if __name__ == "__main__":
     # logging
     parser.add_argument('--no_wandb', action='store_true', help="disable wandb logging")
     parser.add_argument('--wandb_project', type=str, default='gs_uncertainty')
+    parser.add_argument('--wandb_entity', type=str, default=None, help="wandb user/team; default: your wandb default entity")
     parser.add_argument('--wandb_group', type=str, default=None, help="default: experiment folder (parent of the scene folders)")
-    parser.add_argument('--wandb_name', type=str, default=None, help="default: last two parts of model_path, e.g. tandt/train")
+    parser.add_argument('--wandb_name', type=str, default=None, help="default: last two parts of model_path, e.g. tandt_train")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -679,11 +680,15 @@ if __name__ == "__main__":
     if not args.no_wandb:
         if WANDB_FOUND:
             parts = os.path.normpath(args.model_path).split(os.sep) if args.model_path else ["run"]
-            wandb.init(project=args.wandb_project,
-                       group=args.wandb_group or (parts[-3] if len(parts) >= 3 else None),
-                       name=args.wandb_name or "/".join(parts[-2:]),
-                       config=vars(args))
-            USE_WANDB = True
+            try:
+                wandb.init(project=args.wandb_project, entity=args.wandb_entity,
+                           group=args.wandb_group or (parts[-3] if len(parts) >= 3 else None),
+                           name=args.wandb_name or "_".join(parts[-2:]),
+                           config=vars(args))
+                USE_WANDB = True
+            except Exception as e:  # e.g. no permission to create the project under this entity
+                print(f"wandb.init failed ({e}): training continues without wandb. "
+                      f"Try an existing project (--wandb_project) or your own entity (--wandb_entity)")
         else:
             print("wandb not installed (pip install wandb): not logging to wandb")
 
