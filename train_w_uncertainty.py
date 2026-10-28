@@ -48,6 +48,12 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+try:
+    import wandb
+    WANDB_FOUND = True
+except ImportError:
+    WANDB_FOUND = False
+USE_WANDB = False  # set in __main__
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +563,12 @@ def prepare_output_and_logger(args):
 
 
 def training_report(tb_writer, iteration, Ll1, loss, L_u, l1_loss, elapsed, testing_iterations, scene: Scene, renderFunc, renderArgs):
+    log = {}  # wandb log of this iteration
+    if USE_WANDB and iteration % 10 == 0:
+        log.update({'train_loss_patches/l1_loss': Ll1.item(), 'train_loss_patches/total_loss': loss.item(),
+                    'iter_time': elapsed})
+        if L_u is not None:
+            log['uncertainty/L_u'] = L_u.item()
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -576,16 +588,23 @@ def training_report(tb_writer, iteration, Ll1, loss, L_u, l1_loss, elapsed, test
                 for idx, viewpoint in enumerate(config['cameras']):
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    if tb_writer and (idx < 5):
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                    if (tb_writer or USE_WANDB) and (idx < 5):
                         # rendered uncertainty 1/C_hat, scaled for display
                         c_hat, acc, _ = render_confidence(viewpoint, scene.gaussians, renderArgs[0], for_vis=True)
                         # log-scaled u in [0,1]: 0 -> u <= 1 (typical), 1 -> u_max (never supervised)
                         u_map = torch.log(1.0 / c_hat.clamp(1e-3, 5.0)) / math.log(scene.gaussians.u_max)
                         u_map = (u_map.clamp(0, 1) * (acc > 0.5)).clamp(0, 1)
-                        tb_writer.add_images(config['name'] + "_view_{}/uncertainty".format(viewpoint.image_name), u_map[None, None], global_step=iteration)
-                        if iteration == testing_iterations[0]:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                        vname = config['name'] + "_view_{}".format(viewpoint.image_name)
+                        if tb_writer:
+                            tb_writer.add_images(vname + "/render", image[None], global_step=iteration)
+                            tb_writer.add_images(vname + "/uncertainty", u_map[None, None], global_step=iteration)
+                            if iteration == testing_iterations[0]:
+                                tb_writer.add_images(vname + "/ground_truth", gt_image[None], global_step=iteration)
+                        if USE_WANDB:
+                            log[vname + "/render"] = wandb.Image(image.permute(1, 2, 0).cpu().numpy())
+                            log[vname + "/uncertainty"] = wandb.Image(u_map.cpu().numpy())
+                            if iteration == testing_iterations[0]:
+                                log[vname + "/ground_truth"] = wandb.Image(gt_image.permute(1, 2, 0).cpu().numpy())
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
@@ -594,12 +613,22 @@ def training_report(tb_writer, iteration, Ll1, loss, L_u, l1_loss, elapsed, test
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                log[config['name'] + '/loss_viewpoint - l1_loss'] = float(l1_test)
+                log[config['name'] + '/loss_viewpoint - psnr'] = float(psnr_test)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_histogram("uncertainty/log_u_histogram", -scene.gaussians._unc.detach(), iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+        log['total_points'] = scene.gaussians.get_xyz.shape[0]
+        log['uncertainty/observed_ratio'] = scene.gaussians.unc_observed.float().mean().item()
+        if USE_WANDB:
+            log['uncertainty/log_u_histogram'] = wandb.Histogram(-scene.gaussians._unc.detach().cpu().numpy())
+            log['scene/opacity_histogram'] = wandb.Histogram(scene.gaussians.get_opacity.detach().cpu().numpy())
         torch.cuda.empty_cache()
+
+    if USE_WANDB and log:
+        wandb.log(log, step=iteration)
 
 
 if __name__ == "__main__":
@@ -631,10 +660,26 @@ if __name__ == "__main__":
                         help="a Gaussian counts as observed once its summed weight on supervised pixels exceeds this")
     parser.add_argument('--unc_min_vcam_views', type=int, default=2,
                         help="supervise a pixel only if at least this many virtual cams see it")
+    # logging
+    parser.add_argument('--no_wandb', action='store_true', help="disable wandb logging")
+    parser.add_argument('--wandb_project', type=str, default='gs_uncertainty')
+    parser.add_argument('--wandb_group', type=str, default=None, help="default: experiment folder (parent of the scene folders)")
+    parser.add_argument('--wandb_name', type=str, default=None, help="default: last two parts of model_path, e.g. tandt/train")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
     print("Optimizing " + args.model_path)
+
+    if not args.no_wandb:
+        if WANDB_FOUND:
+            parts = os.path.normpath(args.model_path).split(os.sep) if args.model_path else ["run"]
+            wandb.init(project=args.wandb_project,
+                       group=args.wandb_group or (parts[-3] if len(parts) >= 3 else None),
+                       name=args.wandb_name or "/".join(parts[-2:]),
+                       config=vars(args))
+            USE_WANDB = True
+        else:
+            print("wandb not installed (pip install wandb): not logging to wandb")
 
     safe_state(args.quiet, seed=args.seed)
 
@@ -643,4 +688,6 @@ if __name__ == "__main__":
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations,
              args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args)
 
+    if USE_WANDB:
+        wandb.finish()
     print("\nTraining complete.")
